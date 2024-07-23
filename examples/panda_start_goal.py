@@ -12,8 +12,9 @@ from urdfenvs.sensors.full_sensor import FullSensor
 from mpscenes.goals.goal_composition import GoalComposition
 from mpscenes.obstacles.sphere_obstacle import SphereObstacle
 
-from fabrics.planner.parameterized_planner import ParameterizedFabricPlanner
+from fabrics.planner.parameterized_planner import ParameterizedFabricPlanner, TorchPlanner
 
+import time
 # TODO: Angle cannot be read through the FullSensor
 
 def initalize_environment(render=True, obstacle_resolution = 8):
@@ -40,29 +41,29 @@ def initalize_environment(render=True, obstacle_resolution = 8):
     # Definition of the obstacle.
     radius_ring = 0.3
     obstacles = []
-    # goal_orientation = [-0.366, 0.0, 0.0, 0.3305]
-    goal_orientation = [1.0, 0.0, 0.0, 0.0]
+    goal_orientation = [-0.366, 0.0, 0.0, 0.3305]
+    # goal_orientation = [1.0, 0.0, 0.0, 0.0]
     rotation_matrix = quaternionic.array(goal_orientation).to_rotation_matrix
-    whole_position = [0.3, 0, 1] #[0.1, 0.6, 0.8]
+    whole_position = [0.3, 0.2, 1] #[0.1, 0.6, 0.8]
     whole_position_obstacles = [10.1, 10.6, 10.8]
-    for i in range(obstacle_resolution + 1):
-        angle = i/obstacle_resolution * 2.*np.pi
-        origin_position = [
-            0.0,
-            radius_ring * np.cos(angle),
-            radius_ring * np.sin(angle),
-        ]
-        position = np.dot(np.transpose(rotation_matrix), origin_position) + whole_position_obstacles
-        static_obst_dict = {
-            "type": "sphere",
-            "geometry": {"position": position.tolist(), "radius": 0.1},
-        }
-        obstacles.append(SphereObstacle(name="staticObst", content_dict=static_obst_dict))
+    # for i in range(obstacle_resolution + 1):
+    #     angle = i/obstacle_resolution * 2.*np.pi
+    #     origin_position = [
+    #         0.0,
+    #         radius_ring * np.cos(angle),
+    #         radius_ring * np.sin(angle),
+    #     ]
+    #     position = np.dot(np.transpose(rotation_matrix), origin_position) + whole_position_obstacles
+    #     static_obst_dict = {
+    #         "type": "sphere",
+    #         "geometry": {"position": position.tolist(), "radius": 0.1},
+    #     }
+    #     obstacles.append(SphereObstacle(name="staticObst", content_dict=static_obst_dict))
     # Definition of the goal.
     goal_dict = {
         "subgoal0": {
             "weight": 1.0,
-            "is_primary_goal": True,
+            "is_primary_goal": False,
             "indices": [0, 1, 2],
             "parent_link": "panda_link0",
             "child_link": "panda_hand",
@@ -72,7 +73,7 @@ def initalize_environment(render=True, obstacle_resolution = 8):
         },
         "subgoal1": {
             "weight": 3.0,
-            "is_primary_goal": False,
+            "is_primary_goal": True,
             "indices": [0, 1, 2],
             "parent_link": "panda_link7",
             "child_link": "panda_hand",
@@ -146,6 +147,7 @@ def set_planner(goal: GoalComposition, degrees_of_freedom: int = 7, obstacle_res
         degrees_of_freedom,
         forward_kinematics,
     )
+    planner2 = TorchPlanner(degrees_of_freedom, forward_kinematics)
     panda_limits = [
             [-2.8973, 2.8973],
             [-1.7628, 1.7628],
@@ -169,7 +171,7 @@ def set_planner(goal: GoalComposition, degrees_of_freedom: int = 7, obstacle_res
 
 
 def run_panda_ring_example(n_steps=5000, render=True, serialize=False, planner=None):
-    obstacle_resolution_ring = 10
+    obstacle_resolution_ring = 0
     (env, goal) = initalize_environment(
         render=render,
         obstacle_resolution=obstacle_resolution_ring
@@ -177,16 +179,21 @@ def run_panda_ring_example(n_steps=5000, render=True, serialize=False, planner=N
     action = np.zeros(7)
     ob, *_ = env.step(action)
     env.reconfigure_camera(1.4000000953674316, 67.9999008178711, -31.0001220703125, (-0.4589785635471344, 0.23635289072990417, 0.3541859984397888))
-
     if not planner:
         planner = set_planner(goal, obstacle_resolution = obstacle_resolution_ring)
         # Serializing the planner is optional
         if serialize:
             planner.serialize('serialized_10.pbz2')
 
-    sub_goal_0_quaternion = quaternionic.array(goal.sub_goals()[1].angle())
-    sub_goal_0_rotation_matrix = sub_goal_0_quaternion.to_rotation_matrix
+    # sub_goal_0_quaternion = quaternionic.array(goal.sub_goals()[1].angle())
+    goal_orientation = [1.0, 0.0, 0.0, 0.0]
+    goal_orientation = [-0.366, 0.0, 0.0, 0.3305]
 
+    sub_goal_0_quaternion = quaternionic.array(goal_orientation)
+
+    sub_goal_0_rotation_matrix = sub_goal_0_quaternion.to_rotation_matrix
+    obstacle_resolution_ring-=1
+    prev_time = time.time()
     for _ in range(n_steps):
         ob_robot = ob['robot_0']
         x_obsts = [
@@ -210,7 +217,10 @@ def run_panda_ring_example(n_steps=5000, render=True, serialize=False, planner=N
             radius_body_panda_hand=0.1,
             angle_goal_1=np.array(sub_goal_0_rotation_matrix),
         )
+        
         ob, *_ = env.step(action)
+        cur_time = time.time()
+        prev_time = cur_time
     env.close()
     return {}
 

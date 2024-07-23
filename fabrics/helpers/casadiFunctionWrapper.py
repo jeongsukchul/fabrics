@@ -40,7 +40,9 @@ class CasadiFunctionWrapper(object):
             pickle.dump(self._argument_dictionary, f)
 
     def evaluate(self, **kwargs):
+        # print("evaluate : ", kwargs)
         for key in kwargs: # pragma no cover
+            # print("key:",key)
             if key == 'x_obst' or key == 'x_obsts':
                 obstacle_dictionary = {}
                 for j, x_obst_j in enumerate(kwargs[key]):
@@ -95,6 +97,7 @@ class CasadiFunctionWrapper(object):
             else:
                 self._argument_dictionary[key] = kwargs[key]
         input_arrays = []
+        # print("constraint_0 : ", kwargs["constraint_0"])
         try:
             for i in self._input_keys:
                 """
@@ -103,6 +106,8 @@ class CasadiFunctionWrapper(object):
                 """
                 input_arrays.append(self._argument_dictionary[i])
             input_arrays = [self._argument_dictionary[i] for i in self._input_keys]
+            # print("input_keys", self._input_keys)
+            # print("input_arrays", *input_arrays)
         except KeyError as e:
             msg = f"Key {e} is not contained in the inputs\n"
             msg += f"Possible keys are {self._input_keys}\n"

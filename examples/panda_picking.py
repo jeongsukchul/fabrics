@@ -241,4 +241,8 @@ def run_panda_example(n_steps=5000, render=True):
 
 
 if __name__ == "__main__":
-    res = run_panda_example(n_steps=5000)
+    parser = argparse.ArgumentParser(description="Run point robot URDF simulation")
+    parser.add_argument("--n_steps", type=int, default=10000, help="Number of simulation steps")
+    parser.add_argument("--debug", action="store_true", help="Enable rendering")
+    args = parser.parse_args()
+    res = run_panda_example(n_steps=args.n_steps)

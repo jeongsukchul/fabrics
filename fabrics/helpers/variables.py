@@ -2,7 +2,7 @@ from typing import Union
 import casadi as ca
 import numpy as np
 from copy import deepcopy
-
+import torch
 class ParameterNotFoundError(Exception):
     pass
 
@@ -133,3 +133,13 @@ class Variables(object):
             + "| parameters : "
             + self._parameters.__str__()
         )
+
+class TorchVariables(Variables):
+    def __init__(self, state_variables=None, parameters=None, parameters_values=None, tensor_type=torch.float32):
+        # Initialize the superclass (Variables)
+        super().__init__(state_variables, parameters, parameters_values)
+        # Additional initialization for TorchVariables
+        self.tensor_type = tensor_type
+
+    def __repr__(self):
+        return f"TorchVariables(state_variables={self._state_variables}, parameters={self._parameters}, tensor_type={self.tensor_type})"

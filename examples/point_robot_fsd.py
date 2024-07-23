@@ -17,7 +17,7 @@ from mpscenes.goals.goal_composition import GoalComposition
 from fabrics.planner.parameterized_planner import ParameterizedFabricPlanner
 
 NUMBER_OF_RAYS = 10
-NUMBER_OF_CONSTRAINTS = 10
+NUMBER_OF_CONSTRAINTS = 1
 
 
 def get_goal_fsd():
@@ -65,7 +65,7 @@ def initalize_environment(render):
 
     Adds an obstacle and goal visualizaion to the environment and
     steps the simulation once.
-   j
+   
     Params
     ----------
     render
@@ -186,10 +186,12 @@ def run_point_robot_urdf(n_steps=10000, render=True):
         )
         for i in range(NUMBER_OF_CONSTRAINTS):
             arguments[f"constraint_{i}"] = ob_robot["FreeSpaceDecompSensor"][f"constraint_{i}"]
+            # print(arguments[f"constraint_{i}"])
+
         action = planner.compute_action(**arguments)
         ob, *_, = env.step(action)
         t1 = time.perf_counter()
-        print(t1-t0)
+        # print("dt : ", t1-t0)
     return {}
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ import logging
 
 from copy import deepcopy
 
-from fabrics.diffGeometry.spec import Spec, checkCompatability
+from fabrics.diffGeometry.spec import Spec, checkCompatability, TorchSpec
 from fabrics.diffGeometry.diffMap import DifferentialMap, DynamicDifferentialMap
 
 from fabrics.helpers.functions import joinRefTrajs
@@ -12,6 +12,9 @@ from fabrics.helpers.variables import Variables
 from fabrics.helpers.casadiFunctionWrapper import CasadiFunctionWrapper
 
 from fabrics.helpers.constants import eps
+import torch
+import functorch
+
 
 class LagrangianException(Exception):
     def __init__(self, expression, message):
@@ -22,6 +25,37 @@ class LagrangianException(Exception):
         return self._expression + ": " + self._message
 
 
+class TorchLagrangian(object):
+    """only for basic Euler Lagrangian is implemented"""
+    def __init__(self, l, **kwargs):
+        # assert isinstance(l, baseEnergy)
+        self._l = l
+        self.process_arguments(**kwargs)
+        self.applyEulerLagrange()
+
+    def process_arguments(self, **kwargs):
+            self._vars = kwargs.get('var')
+
+    def applyEulerLagrange(self):
+        # Compute gradients and Jacobians using functorch
+        dL_dxdot = lambda x,xdot: functorch.grad(lambda xdot: self._l(x,xdot))(xdot)
+        dL_dx = lambda x, xdot: functorch.grad(lambda x: self._l(x, xdot))(x)
+        d2L_dxdxdot = lambda x, xdot: functorch.grad(lambda xdot: dL_dx(x,xdot))(xdot)
+        d2L_dxdot2 = lambda x, xdot: functorch.grad(lambda xdot: dL_dxdot(x,xdot))(xdot)
+        x = self._vars.position_variable()
+        f_rel = torch.zeros(x.shape[-1])
+        en_rel = torch.zeros(x.shape[-1])
+
+        F = d2L_dxdxdot
+        f_e = -dL_dx
+        M = d2L_dxdot2
+        f = lambda x,xdot: F(x,xdot) @ xdot + f_e(x,xdot) + f_rel(x,xdot)
+        self._H = lambda x,xdot : dL_dxdot(x,xdot) @ xdot - self._l(x,xdot) + en_rel(x,xdot)
+        self._S = TorchSpec(M, f=f, var=self._vars)
+
+
+    
+    
 class Lagrangian(object):
     """description"""
 
@@ -58,6 +92,7 @@ class Lagrangian(object):
             self._H = kwargs.get('hamiltonian')
             self._S = kwargs.get('spec')
         else:
+            # print("EulerLagrange Applied with ", self._l, kwargs)
             self.applyEulerLagrange()
 
 

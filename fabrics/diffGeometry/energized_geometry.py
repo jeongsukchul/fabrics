@@ -2,7 +2,7 @@ import casadi as ca
 import numpy as np
 from copy import deepcopy
 
-from fabrics.diffGeometry.spec import Spec, checkCompatability
+from fabrics.diffGeometry.spec import Spec, checkCompatability, TorchSpec
 from fabrics.diffGeometry.geometry import Geometry
 from fabrics.diffGeometry.energy import Lagrangian
 from fabrics.diffGeometry.diffMap import DifferentialMap, DynamicDifferentialMap
@@ -11,6 +11,8 @@ from fabrics.diffGeometry.casadi_helpers import outerProduct
 from fabrics.helpers.constants import eps
 from fabrics.helpers.functions import joinRefTrajs
 from fabrics.helpers.casadiFunctionWrapper import CasadiFunctionWrapper
+
+import torch
 
 class EnergizedGeometry(Spec):
     # Should not be used as it is not compliant with summation
@@ -27,6 +29,31 @@ class EnergizedGeometry(Spec):
         super().__init__(le._S._M, f=f, var=g._vars)
         self._le = le
 
+class TorchWeightedGeometry(TorchSpec):
+    # Spec + Finler Lagrangian
+    def __init__(self, **kwargs):
+        le = kwargs.get("le")
+        if "g" in kwargs:
+            g = kwargs.get("g")
+            var = g._vars + le._vars
+            self._le = le
+            self._h = g._h
+            self._M = le._S.M()
+            self._vars = var
+        if "s" in kwargs:
+            s = kwargs.get("s")
+            checkCompatability(le, s)
+            self._le = le
+            super().__init__(s.M(), f=s.f(), var=s._vars)
+
+    def __add__(self, b):
+        spec = super().__add__(b)
+        le = self._le + b._le
+        return WeightedGeometry(s=spec, le=le)
+    def pull(self, dm: DifferentialMap):
+        spec = super().pull(dm)
+        le_pulled = self._le.pull(dm)
+        return WeightedGeometry(s=spec, le=le_pulled, ref_names=self.ref_names())
 
 class WeightedGeometry(Spec):
     def __init__(self, **kwargs):

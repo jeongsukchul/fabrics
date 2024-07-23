@@ -13,7 +13,7 @@ from mpscenes.obstacles.sphere_obstacle import SphereObstacle
 from fabrics.helpers.functions import get_rotation_matrix
 
 from fabrics.planner.parameterized_planner import ParameterizedFabricPlanner
-
+import argparse
 # TODO: Angle cannot be read through the FullSensor
 
 absolute_path = os.path.dirname(os.path.abspath(__file__))
@@ -218,4 +218,9 @@ def run_panda_ring_example(n_steps=5000, render=True, serialize=False, planner=N
 
 
 if __name__ == "__main__":
-    res = run_panda_ring_example(n_steps=10000, serialize = True)
+    parser = argparse.ArgumentParser(description="Run point robot URDF simulation")
+    parser.add_argument("--n_steps", type=int, default=10000, help="Number of simulation steps")
+    parser.add_argument("--debug", action="store_true", help="Enable rendering")
+    args = parser.parse_args()
+    res = run_panda_ring_example(n_steps=args.n_steps, render=True)
+

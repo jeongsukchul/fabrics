@@ -7,6 +7,9 @@ from fabrics.helpers.variables import Variables
 from fabrics.helpers.casadiFunctionWrapper import CasadiFunctionWrapper
 
 
+class TorchGeometry(Geometry):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 class Geometry:
     """description"""
 

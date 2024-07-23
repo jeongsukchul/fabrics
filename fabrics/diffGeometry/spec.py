@@ -9,7 +9,34 @@ from fabrics.helpers.functions import checkCompatability
 
 from fabrics.helpers.casadiFunctionWrapper import CasadiFunctionWrapper
 from fabrics.helpers.variables import Variables
+import torch
+class TorchSpec:
+    _vars: Variables
 
+    def __init__(self, M, **kwargs):
+        self._M = M
+        if 'f' in kwargs:
+            self._f = kwargs.get('f')
+        if 'var' in kwargs:
+            self._vars = kwargs.get('var')
+        if 'h' in kwargs:
+            self._h = kwargs.get('h')
+    def __add__(self, b):
+        assert isinstance(b, TorchSpec)
+        all_vars = self._vars + b._vars
+        if hasattr(self, '_h') and hasattr(b, '_h'):
+            return Spec(self.M() + b.M(), h=self.h() + b.h(), var=all_vars, **ref_arguments)
+        else:
+            return Spec(self.M() + b.M(), f=self.f() + b.f(), var=all_vars, **ref_arguments)
+
+    def pull(self, dm:DifferentialMap):
+        Jt = torch.transpose(dm._J,0,1)
+        M_pulled = lambda x,xdot: Jt @ self._M(x,xdot) @ dm._J
+        f1 = lambda x,xdot: Jt@ self._M(x,xdot) @ dm.Jdotqdot()
+        f2 = lambda x,xdot: Jt @ self._f(x,xdot)
+        f_pulled =lambda x,xdot: f1(x,xdot) + f2(x,xdot)
+        q = self._vars.position_variable()
+        qdot = self._vars.velocity_variable()
 class Spec:
     """description"""
 

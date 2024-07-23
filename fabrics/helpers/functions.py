@@ -5,7 +5,7 @@ import numpy as np
 from fabrics.helpers.exceptions import SpecException
 from fabrics.helpers.exceptions import ExpressionSparseError
 
-
+from type import Callable
 def checkCompatability(a, b):
     if a.x().size() != b.x().size():
         raise SpecException(
@@ -32,18 +32,22 @@ def parse_symbolic_input(expression: str, x: ca.SX, xdot: ca.SX, name: str = "")
         name = "_" + name
     new_parameters = {}
     parameters = re.findall(r"\(\'(\w*)\'\)", expression)
+    print("expression", expression)
     for i, _ in enumerate(parameters):
         expression = expression.replace(parameters[i], parameters[i] + name)
         parameters[i] += name
-
+    print("name + expression", expression)
     symbolic_expression = eval(expression)
+    print("symbolic expression", symbolic_expression)
     if isinstance(symbolic_expression, ca.SX):
         all_variables = ca.symvar(symbolic_expression)
     else:
         all_variables = []
+    print("all variable", all_variables)
     for variable in all_variables:
         if variable.name() in parameters:
             new_parameters[variable.name()] = variable
+    print("new parameters", new_parameters)
     return new_parameters, symbolic_expression
 
 

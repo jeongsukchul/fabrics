@@ -12,7 +12,7 @@ from mpscenes.obstacles.sphere_obstacle import SphereObstacle
 from mpscenes.goals.goal_composition import GoalComposition
 
 from fabrics.planner.parameterized_planner import ParameterizedFabricPlanner
-
+import argparse
 # Fabrics example for a 3D point mass robot. The fabrics planner uses a 2D point
 # mass to compute actions for a simulated 3D point mass.
 #
@@ -97,13 +97,13 @@ def set_planner(goal: GoalComposition):
         root_link="world",
         end_links="base_link",
     )
-    collision_geometry = "-2.0 / (x ** 1) * xdot ** 2"
-    collision_finsler = "1.0/(x**2) * (1 - ca.heaviside(xdot))* xdot**2"
+    # collision_geometry = "-2.0 / (x ** 1) * xdot ** 2"
+    # collision_finsler = "1.0/(x**2) * (1 - ca.heaviside(xdot))* xdot**2"
     planner = ParameterizedFabricPlanner(
         degrees_of_freedom,
         forward_kinematics,
-        collision_geometry=collision_geometry,
-        collision_finsler=collision_finsler
+        # collision_geometry=collision_geometry,
+        # collision_finsler=collision_finsler
     )
     collision_links = ["base_link"]
     # The planner hides all the logic behind the function set_components.
@@ -116,7 +116,7 @@ def set_planner(goal: GoalComposition):
     return planner
 
 
-def run_point_robot_urdf(n_steps=10000, render=True):
+def run_point_robot_urdf(n_steps=10000, render=True, debug=False):
     """
     Set the gym environment, the planner and run point robot example.
     The initial zero action step is needed to initialize the sensor in the
@@ -134,10 +134,12 @@ def run_point_robot_urdf(n_steps=10000, render=True):
 
     action = np.array([0.0, 0.0, 0.0])
     ob, *_ = env.step(action)
-
+    print("leaves : ", planner.leaves)
     for _ in range(n_steps):
         # Calculate action with the fabric planner, slice the states to drop Z-axis [3] information.
         ob_robot = ob['robot_0']
+        if debug:
+            print(f"step: {_}")
         action = planner.compute_action(
             q=ob_robot["joint_state"]["position"],
             qdot=ob_robot["joint_state"]["velocity"],
@@ -145,11 +147,15 @@ def run_point_robot_urdf(n_steps=10000, render=True):
             weight_goal_0=ob_robot['FullSensor']['goals'][2]['weight'],
             x_obst_0=ob_robot['FullSensor']['obstacles'][3]['position'],
             radius_obst_0=ob_robot['FullSensor']['obstacles'][3]['size'],
-            radius_body_base_link=np.array([0.2])
+            radius_body_base_link=np.array([0.2]),
         )
         ob, *_, = env.step(action)
     env.close()
     return {}
 
 if __name__ == "__main__":
-    res = run_point_robot_urdf(n_steps=10000, render=True)
+    parser = argparse.ArgumentParser(description="Run point robot URDF simulation")
+    parser.add_argument("--n_steps", type=int, default=10000, help="Number of simulation steps")
+    parser.add_argument("--debug", action="store_true", help="Enable rendering")
+    args = parser.parse_args()
+    res = run_point_robot_urdf(n_steps=args.n_steps, render=True, debug=args.debug)
