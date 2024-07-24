@@ -30,7 +30,7 @@ from fabrics.components.leaves.geometry import (AvoidanceLeaf,
 from fabrics.components.leaves.leaf import Leaf
 from fabrics.diffGeometry.diffMap import (DifferentialMap,
                                           DynamicDifferentialMap)
-from fabrics.diffGeometry.energized_geometry import WeightedGeometry
+from fabrics.diffGeometry.energized_geometry import WeightedGeometry, TorchWeightedGeometry
 from fabrics.diffGeometry.energy import Lagrangian, TorchLagrangian
 from fabrics.diffGeometry.geometry import Geometry, TorchGeometry
 from fabrics.diffGeometry.speedControl import Damper
@@ -93,10 +93,10 @@ class TorchPlanner(object):
     def set_base_geometry(self):
         q = self._variables.position_variable()
         qdot = self._variables.velocity_variable() 
-        base_energy = self._config.setBaseEnergy(xdot=qdot)
+        base_energy = self._config.base_energy
         base_geometry = TorchGeometry(h = torch.zeros(self._dof), var=self._variables)
         base_lagrangian = TorchLagrangian(base_energy, var=self._variables)
-        self._geometry = WeightedGeometry(g=base_geometry, le=base_lagrangian)
+        self._geometry = TorchWeightedGeometry(g=base_geometry, le=base_lagrangian)
     
     """ ADDING COMPONENTS"""
     def add_geometry(

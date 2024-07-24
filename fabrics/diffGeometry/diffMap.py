@@ -3,8 +3,41 @@ import numpy as np
 
 from fabrics.helpers.casadiFunctionWrapper import CasadiFunctionWrapper
 from fabrics.helpers.variables import Variables
+import functorch
+class TorchDifferentialMap:
+    _vars: Variables
+    _J: ca.SX
+    _Jdot: ca.SX
 
+    def __init__(self, phi: ca.SX, variables: Variables, **kwargs):
+        self._vars = variables
+        Jdot_sign = -1
+        if 'Jdot_sign' in kwargs.keys():
+            Jdot_sign = kwargs.get('Jdot_sign')
+        self._vars.verify()
+        self._phi = phi
+        q = self._vars.position_variable()
+        qdot = self._vars.velocity_variable()
+        self._J = lambda q: functorch.jvp(phi,q)
+        self._Jdot = lambda q,qdot: Jdot_sign * functorch.jvp(self._J(q) @ qdot,q)
 
+    def Jdotqdot(self):
+        return lambda q, qdot: self._Jdot(q,qdot) @ qdot
+
+    def phidot(self):
+        return lambda q, qdot: self._J(q) @ qdot
+
+    def params(self) -> dict:
+        return self._vars.parameters()
+
+    def state_variables(self) -> dict:
+        return self._vars.state_variables()
+
+    def forward(self, q, qdot):
+        x = self._phi(q)
+        J = self._J(q)
+        Jdot = self._Jdot(q,qdot)
+        return x, J, Jdot
 class DifferentialMap:
     _vars: Variables
     _J: ca.SX

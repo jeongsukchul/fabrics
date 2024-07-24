@@ -60,63 +60,28 @@ class FabricPlannerConfig:
 
 from typing import Callable, Tuple
 import torch
-Energy = Tuple[Callable[[torch.Tensor, torch.Tensor], torch.Tensor], torch.Tensor, torch.Tensor]
-Geometry = Tuple[Callable[[torch.Tensor, torch.Tensor], torch.Tensor],torch.Tensor,torch.Tensor]
-attractorPotential = Tuple[Callable[[torch.Tensor],torch.Tensor],torch.Tensor]
-attractorMetric = Tuple[Callable[[torch.Tensor],torch.Tensor],torch.Tensor]
-damperBeta = Tuple[Callable[[torch.Tensor, torch.Tensor, torch.Tensor], torch.Tensor],torch.Tensor,torch.Tensor,torch.Tensor]
-damperEta = Tuple[Callable[[torch.Tensor], torch.Tensor],torch.Tensor]
+Energy = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
+Geometry = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
+attractorPotential = Callable[[torch.Tensor],torch.Tensor]
+attractorMetric = Callable[[torch.Tensor],torch.Tensor]
+damperBeta = Callable[[torch.Tensor, torch.Tensor, torch.Tensor], torch.Tensor]
+damperEta = Callable[[torch.Tensor], torch.Tensor]
 class TorchConfig:
     forcing_type: str = 'speed-controlled' # options are 'speed-controlled', 'pure-geometry', 'execution-energy', 'forced', 'forced-energized'
-    def base_energy(xdot: torch.Tensor):
-        return 0.5 * 0.2 * xdot**2 #"0.5 * 0.2 * ca.dot(xdot, xdot)"
-    def collision_geometry(x: torch.Tensor, xdot: torch.Tensor):
-        return -0.5 /(x**5) * (-0.5* torch.sign(xdot)-1)*xdot **2 #"-0.5 / (x ** 5) * (-0.5 * (ca.sign(xdot) - 1)) * xdot ** 2"
-    def collision_finsler(x:torch.Tensor, xdot: torch.Tensor): # "0.1/(x**1) * xdot**2"
-        return 0.1/(x**1) * xdot**2
-    def limit_geometry(x:torch.Tensor, xdot: torch.Tensor): #"-0.1 / (x ** 1) * xdot ** 2"
-        return -0.1/x * xdot ** 2
-    def limit_finsler(x:torch.Tensor, xdot: torch.Tensor): # 0.1/x * (-0.5 *  (ca.sign(xdot) - 1)) * xdot**2"
-        return 0.1/x *(-0.5 * torch.sign(xdot)-1) * xdot**2
-    def self_collision_geometry(x:torch.Tensor, xdot:torch.Tensor): #-0.5/x *(-0.5*(ca.sign(xdot) - 1)) * xdot ** 2"
-        return -0.5/x *(-0.5*(torch.sign(xdot)-1))*xdot**2
-    def self_collision_finsler(x:torch.Tensor, xdot:torch.Tensor):  #"0.1/(x**1) * xdot**2"
-        return 0.1/x * xdot**2
-    def geometry_plane_constraint(x:torch.Tensor, xdot:torch.Tensor): #"-0.5 / (x ** 5) * (-0.5 * (ca.sign(xdot) - 1)) * xdot ** 2"
-        return -0.5/(x**5) *(-0.5*(torch.sign(xdot)-1))*xdot**2
-    def finsler_plane_constraint(x:torch.Tensor, xdot:torch.Tensor): #0.1/(x**1)*xdot**2
-        return 0.1/x *xdot**2
-    def attractor_potential(x:torch.Tensor): #"5.0 * (ca.norm_2(x) + 1 / 10 * ca.log(1 + ca.exp(-2 * 10 * ca.norm_2(x))))" 
-        return 5.0 * (torch.linalg.norm(x,2) + 0.1* torch.log(1+ torch.exp(-2 *10 * torch.linalg.norm(x,2))))
-    def attractor_metric(x: torch.Tensor): # "((2.0 - 0.3) * ca.exp(-1 * (0.75 * ca.norm_2(x))**2) + 0.3) * ca.SX(np.identity(x.size()[0]))"
-        return ((2.0-0.3)* torch.exp(-1*(0.75* torch.linalg.norm(x,2)**2)+0.3)*torch.eye(x.shape[-1]))
-    def damper_beta(x: torch.Tensor, a_ex: torch.Tensor, a_le: torch.Tensor): # "0.5 * (ca.tanh(-0.5 * (ca.norm_2(x) - 0.02)) + 1) * 6.5 + 0.01 + ca.fmax(0, sym('a_ex') - sym('a_le'))"
-        return 0.5*(torch.tanh(-0.5* (torch.linalg.norm(x,2)-0.02))+1) * 6.5 + 0.01 + torch.max(0,a_ex-a_le)
-    def damper_eta(xdot: torch.Tensor): # 0.5 * (ca.tanh(-0.9 * (1 - 1/2) * ca.dot(xdot, xdot) - 0.5) + 1)
-        return 0.5 * (torch.tanh(-0.9* (1- 1/2)* torch.sum(xdot*xdot, dim=-1)-0.5)+1)
+    base_energy: Energy = lambda x,xdot: 0.5*0.2 * xdot**2
+    collision_geometry: Geometry = lambda x, xdot: -0.5 /(x**5) * (-0.5* torch.sign(xdot)-1)*xdot **2
+    collision_finsler : Energy = lambda x, xdot: 0.1/(x**1) * xdot**2
+    limit_geometry : Geometry = lambda x, xdot: -0.1/x * xdot ** 2
+    limit_finsler : Energy = lambda x, xdot: 0.1/x *(-0.5 * torch.sign(xdot)-1) * xdot**2
+    self_collision_geometry : Geometry = lambda x, xdot: -0.5/x *(-0.5*(torch.sign(xdot)-1))*xdot**2
+    self_collision_finsler : Energy = lambda x, xdot: 0.1/x * xdot**2
+    geometry_plane_constraint : Geometry = lambda x, xdot: -0.5/(x**5) *(-0.5*(torch.sign(xdot)-1))*xdot**2
+    finsler_plane_constraint : Energy = lambda x, xdot: 0.1/x *xdot**2
+    attractor_metric : attractorMetric = lambda x, xdot: ((2.0-0.3)* torch.exp(-1*(0.75* torch.linalg.norm(x,2)**2)+0.3)*torch.eye(x.shape[-1]))
+    attractor_potential : attractorPotential = lambda x, xdot: 5.0 * (torch.linalg.norm(x,2) + 0.1* torch.log(1+ torch.exp(-2 *10 * torch.linalg.norm(x,2))))
+    damper_beta : damperBeta = lambda x, a_ex, a_le: 0.5*(torch.tanh(-0.5* (torch.linalg.norm(x,2)-0.02))+1) * 6.5 + 0.01 + torch.max(0,a_ex-a_le)
+    damper_eta : damperEta = lambda xdot: 0.5 * (torch.tanh(-0.9* (1- 1/2)* torch.sum(xdot*xdot, dim=-1)-0.5)+1)
     
-    def setBaseEnergy(self, x:torch.Tensor, xdot:torch.Tensor)->Energy:
-        return (self.base_energy, xdot)
-    def setCollisionGeometry(self,x:torch.Tensor, xdot:torch.Tensor)->Geometry:
-        return (self.collision_geometry, x, xdot)
-    def setCollisionFinsler(self,x:torch.Tensor, xdot:torch.Tensor)->Energy:
-        return (self.collision_finsler, x, xdot)
-    def setLimitGeometry(self,x:torch.Tensor, xdot:torch.Tensor)->Geometry:
-        return (self.limit_geometry, x, xdot)
-    def setLimitFinsler(self,x:torch.Tensor, xdot:torch.Tensor)->Energy:
-        return (self.limit_finsler, x, xdot)
-    def setGeometryPlaneConstraint(self,x:torch.Tensor, xdot:torch.Tensor)->Geometry:
-        return (self.geometry_plane_constraint, x, xdot)
-    def setFinslerPlaneConstraint(self,x:torch.Tensor, xdot:torch.Tensor)->Energy:
-        return (self.finsler_plane_constraint, x, xdot)
-    def setAttractorPotential(self,x:torch.Tensor, xdot:torch.Tensor)->attractorPotential:
-        return (self.collision_geometry, x, xdot)
-    def setAttractorMetric(self,x:torch.Tensor, xdot:torch.Tensor)->attractorMetric:
-        return (self.collision_geometry, x, xdot)
-    def setDamperBeta(self,x:torch.Tensor, a_ex:torch.Tensor, a_le:torch.Tensor)->damperBeta:
-        return (self.collision_geometry, x, a_ex, a_le)
-    def setDamperEta(self,xdot:torch.Tensor)->damperEta:
-        return (self.collision_geometry, xdot)
 @dataclass
 class Subgoal:
     child_link: str

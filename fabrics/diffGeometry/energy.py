@@ -29,7 +29,7 @@ class TorchLagrangian(object):
     """only for basic Euler Lagrangian is implemented"""
     def __init__(self, l, **kwargs):
         # assert isinstance(l, baseEnergy)
-        self._l = l
+        self._l = l[0]
         self.process_arguments(**kwargs)
         self.applyEulerLagrange()
 

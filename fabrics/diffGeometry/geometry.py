@@ -10,6 +10,27 @@ from fabrics.helpers.casadiFunctionWrapper import CasadiFunctionWrapper
 class TorchGeometry(Geometry):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+    
+    def x(self):
+        return self._vars.position_variable()
+
+    def xdot(self):
+        return self._vars.velocity_variable()
+
+    def __add__(self, b):
+        assert isinstance(b, Geometry)
+        # TODO: checkCompatibility()  <24-07-21, mspahn> #
+        var = self._vars + b._vars
+        return Geometry(h=self._h + b._h, var=var)
+    def pull(self, dm: DifferentialMap):
+        assert isinstance(dm, DifferentialMap)
+        h_pulled = lambda x, xdot: dm._J @ (self._h(x,xdot) + dm.Jdotqdot())
+
+        return Geometry(h=h_pulled, var=self._vars)
+    def evaluate(self, x, xdot):
+        return self._h(x,xdot)
+
+
 class Geometry:
     """description"""
 
