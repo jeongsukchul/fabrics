@@ -5,8 +5,69 @@ import casadi as ca
 
 from fabrics.diffGeometry.energy import Lagrangian
 from fabrics.diffGeometry.geometry import Geometry
-from fabrics.helpers.variables import Variables
+from fabrics.helpers.variables import Variables, TorchVariables
 from fabrics.diffGeometry.diffMap import DifferentialMap
+from fabrics.helpers.casadiFunctionWrapper import CasadiFunctionWrapper, TorchFunctionWrapper
+
+
+import torch
+class TorchLeaf(object):
+    _lag: Lagrangian
+    _geo: Geometry
+    _map: DifferentialMap
+
+    def __init__(
+        self,
+        parent_variables: Variables,
+        leaf_name: str,
+        forward_kinematics: Union[ca.SX, None],
+        dim: int = 1,
+    ):
+        self._parent_variables = parent_variables
+        self._x = f"x_{leaf_name}"
+        self._xdot =f"xdot_{leaf_name}"
+        leaf_variables = TorchVariables(
+            position=f"x_{leaf_name}", velocity=f"xdot_{leaf_name}"
+        )
+        self._leaf_variables = leaf_variables
+        self._forward_kinematics = forward_kinematics
+        self._p = {}
+        self._leaf_name = leaf_name
+        if not forward_kinematics is None:
+            self._map = DifferentialMap(forward_kinematics, parent_variables)
+
+    def set_params(self, **kwargs):
+        for key in self._p:
+            if key in kwargs:
+                self._p[key] = kwargs.get(key)
+
+    def geometry(self) -> Geometry:
+        return self._geo
+
+    def map(self) -> DifferentialMap:
+        try:
+            return self._map
+        except AttributeError:
+            return None
+
+    def lagrangian(self):
+
+        return self._lag
+    def x(self):
+        func = lambda **kwargs : kwargs[self._x]
+        return TorchFunctionWrapper(function=func, variables = self._leaf_variables, name="x in leaf")
+
+    def xdot(self):
+        func = lambda **kwargs : kwargs[self._xdot]
+        return TorchFunctionWrapper(function=func, variables = self._leaf_variables, name= "xdot in leaf")
+
+    # def evaluate(self, **kwargs) -> Dict[str, np.ndarray]:
+    #     x, J, Jdot = self._map.forward(**kwargs)
+    #     xdot = np.dot(J, kwargs['qdot'])
+    #     return dict(
+    #         x=x,
+    #         xdot=xdot,
+    #     )
 
 class Leaf(object):
 
@@ -64,6 +125,7 @@ class Leaf(object):
             x=x,
             xdot=xdot,
         )
+
         if hasattr(self, '_geo') and hasattr(self, '_lag'):
             state_variable_names = list(self._geo._vars.state_variables().keys())
             task_space_arguments = {

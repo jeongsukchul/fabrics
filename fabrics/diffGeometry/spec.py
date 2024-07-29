@@ -3,43 +3,84 @@ import numpy as np
 import logging
 from copy import deepcopy
 
-from fabrics.diffGeometry.diffMap import DifferentialMap, DynamicDifferentialMap
+from fabrics.diffGeometry.diffMap import DifferentialMap, DynamicDifferentialMap, TorchDifferentialMap
 from fabrics.helpers.constants import eps
 from fabrics.helpers.functions import checkCompatability
 
-from fabrics.helpers.casadiFunctionWrapper import CasadiFunctionWrapper
-from fabrics.helpers.variables import Variables
+from fabrics.helpers.casadiFunctionWrapper import CasadiFunctionWrapper, TorchFunctionWrapper
+from fabrics.helpers.variables import Variables, TorchVariables
 import torch
 class TorchSpec:
     _vars: Variables
 
     def __init__(self, M, **kwargs):
         self._M = M
-        if 'f' in kwargs:
-            self._f = kwargs.get('f')
+        self._M.set_name("M")
+        self._Minv = M.pinv()
+        self._Minv.set_name("Minv")
+
         if 'var' in kwargs:
-            self._vars = kwargs.get('var')
+            var = kwargs.get('var')
+            assert isinstance(var,TorchVariables)
+            self._vars = var
         if 'h' in kwargs:
-            self._h = kwargs.get('h')
+            h = kwargs.get('h')
+            assert isinstance(h, TorchFunctionWrapper)
+            self._h = h
+            self._h.set_name("h")
+            self._f = self._M @ self._h
+            self._f.set_name("maded f in torch spec")
+        if 'f' in kwargs:
+            f = kwargs.get('f')
+            assert isinstance(f,TorchFunctionWrapper)
+            self._f = f 
+            self._h = self._Minv @ self._f
+            self._h.set_name("maded h in torch spec")
+        if 'M_subst' in kwargs:
+            self._M_subst = kwargs.get('M_subst')
+        if 'f_subst' in kwargs:
+            self._f_subst = kwargs.get('f_subst')
+        
+        self._x = self._vars._position
+        self._xdot = self._vars._velocity
     def __add__(self, b):
         assert isinstance(b, TorchSpec)
         all_vars = self._vars + b._vars
         if hasattr(self, '_h') and hasattr(b, '_h'):
-            return Spec(self.M() + b.M(), h=self.h() + b.h(), var=all_vars, **ref_arguments)
+            return TorchSpec(self._M + b._M, h=self._h + b._h, var=all_vars)
         else:
-            return Spec(self.M() + b.M(), f=self.f() + b.f(), var=all_vars, **ref_arguments)
+            return TorchSpec(self._M + b._M, f=self._f + b._f, var=all_vars)
 
-    def pull(self, dm:DifferentialMap):
-        Jt = torch.transpose(dm._J,0,1)
-        M_pulled = lambda x,xdot: Jt @ self._M(x,xdot) @ dm._J
-        f1 = lambda x,xdot: Jt@ self._M(x,xdot) @ dm.Jdotqdot()
-        f2 = lambda x,xdot: Jt @ self._f(x,xdot)
-        f_pulled =lambda x,xdot: f1(x,xdot) + f2(x,xdot)
-        q = self._vars.position_variable()
-        qdot = self._vars.velocity_variable()
+    def pull(self, dm:TorchDifferentialMap):
+        Jt = dm._J.transpose()
+        Jt.set_name("J tr")
+        M_subst = self._M.lowerLeaf(dm)
+        M_subst.set_name("M_subst")
+        f = self._f.lowerLeaf(dm)
+        f.set_name("f_subst")
+        M_pulled = Jt @ M_subst @ dm._J
+        M_pulled.set_name("M_pulled")
+        f1 = Jt @ M_subst @ dm._Jdotqdot
+        f1.set_name("f1")
+        f2 = Jt @ f
+        f2.set_name("f2")
+        f_pulled = f1+f2
+        f_pulled.set_name("f_pulled")
+        new_vars = TorchVariables(position = dm._vars._position, velocity= dm._vars._velocity, parameter_variables=dm._vars._parameter_variables | self._vars._parameter_variables)
+        
+        return TorchSpec(M_pulled, M_subst = M_subst, f_subst = f, f=f_pulled, var=new_vars)
+
+    def x(self):
+        func = lambda **kwargs : kwargs[self._x]
+        return TorchFunctionWrapper(function=func, variables = self._vars, name="x in spec")
+
+    def xdot(self):
+        func = lambda **kwargs : kwargs[self._xdot]
+        return TorchFunctionWrapper(function=func, variables = self._vars, name= "xdot in spec")
+
+
 class Spec:
     """description"""
-
     _vars: Variables
 
     def __init__(self, M: ca.SX, **kwargs):
@@ -73,6 +114,10 @@ class Spec:
             self._J_ref = kwargs.get("J_ref")
             logging.debug("Casadi pseudo inverse is used in Lagrangian")
             self._J_ref_inv = ca.mtimes(ca.transpose(self._J_ref), ca.inv(ca.mtimes(self._J_ref, ca.transpose(self._J_ref)) + np.identity(self.x_ref().size()[0]) * eps))
+        if "M_subst" in kwargs:
+            self._M_subst = kwargs.get("M_subst")
+        if "f_subst" in kwargs:
+            self._f_subst = kwargs.get("f_subst")
         self._xdot_d = np.zeros(self.x().size()[0])
         self._vars.verify()
         assert isinstance(M, ca.SX)
@@ -114,18 +159,21 @@ class Spec:
         var = deepcopy(self._vars)
         for refTraj in self._refTrajs:
             var += refTraj._vars
+            
+        S = ca.svd(self.M())[1]
         self._funs = CasadiFunctionWrapper(
-            "funs", var, {"M": self.M(), "f": self.f(), "xddot": self._xddot}
+            "funs", var, {"M": self.M(), "S" : S, "f": self.f(), "xddot": self._xddot}
         )
 
     def evaluate(self, **kwargs):
         evaluations = self._funs.evaluate(**kwargs)
         M_eval = evaluations["M"]
+        M_condn = evaluations["S"]
         if len(M_eval.shape) == 1:
             M_eval = np.array([M_eval])
         f_eval = evaluations["f"]
         xddot_eval = evaluations["xddot"]
-        return [M_eval, f_eval, xddot_eval]
+        return [M_eval, M_condn, f_eval, xddot_eval]
 
     def __add__(self, b):
         assert isinstance(b, Spec)
@@ -156,13 +204,19 @@ class Spec:
 
     def pull(self, dm: DifferentialMap):
         assert isinstance(dm, DifferentialMap)
+        x = self._vars.position_variable()
+        xdot = self._vars.velocity_variable()
+        M_subst = ca.substitute(self.M(), x,dm._phi)
+        M_subst = ca.substitute(M_subst, xdot,dm.phidot())
+        f_subst = ca.substitute(self.f(), x,dm._phi)
+        f_subst = ca.substitute(f_subst, xdot,dm.phidot())
+
         M_pulled = ca.mtimes(ca.transpose(dm._J), ca.mtimes(self.M(), dm._J))
         Jt = ca.transpose(dm._J)
         f_1 = ca.mtimes(Jt, ca.mtimes(self.M(), dm.Jdotqdot()))
         f_2 = ca.mtimes(Jt, self.f())
         f_pulled = f_1 + f_2
-        x = self._vars.position_variable()
-        xdot = self._vars.velocity_variable()
+
         M_pulled_subst_x = ca.substitute(M_pulled, x, dm._phi)
         M_pulled_subst_x_xdot = ca.substitute(
             M_pulled_subst_x, xdot, dm.phidot()
@@ -171,6 +225,7 @@ class Spec:
         f_pulled_subst_x_xdot = ca.substitute(
             f_pulled_subst_x, xdot, dm.phidot()
         )
+        
         new_state_variables = dm.state_variables()
         new_parameters = {}
         new_parameters.update(self._vars.parameters())
@@ -178,9 +233,9 @@ class Spec:
         new_vars = Variables(state_variables=new_state_variables, parameters=new_parameters)
         J_ref = dm._J
         if self.is_dynamic():
-            return Spec(M_pulled_subst_x_xdot, f=f_pulled_subst_x_xdot, var=new_vars, J_ref=J_ref, ref_names=self.ref_names())
+            return Spec(M_pulled_subst_x_xdot, f=f_pulled_subst_x_xdot, var=new_vars, J_ref=J_ref, ref_names=self.ref_names(), M_subst=M_subst, f_subst=f_subst)
         else:
-            return Spec(M_pulled_subst_x_xdot, f=f_pulled_subst_x_xdot, var=new_vars, ref_names=self.ref_names())
+            return Spec(M_pulled_subst_x_xdot, f=f_pulled_subst_x_xdot, var=new_vars, ref_names=self.ref_names(),M_subst= M_subst, f_subst= f_subst)
         """
         if hasattr(dm, '_refTraj'):
             refTrajs = [dm._refTraj] + [refTraj.pull(dm) for refTraj in self._refTrajs]

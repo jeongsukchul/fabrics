@@ -1,7 +1,7 @@
 from typing import List
 import casadi as ca
 from fabrics.diffGeometry.diffMap import (
-    DifferentialMap,
+    DifferentialMap, TorchDifferentialMap
 )
 from fabrics.helpers.distances import (capsule_to_sphere, cuboid_to_sphere,
                                        sphere_to_plane, cuboid_to_capsule)
@@ -11,7 +11,10 @@ class ParameterizedGoalMap(DifferentialMap):
     def __init__(self, var, fk, reference_variable):
         phi = fk - reference_variable
         super().__init__(phi, var)
-
+class TorchParameterizedGoalMap(TorchDifferentialMap):
+    def __init__(self, var, fk, reference_variable):
+        phi = fk - reference_variable
+        super().__init__(phi, var)
 class ParameterizedGeometryMap(DifferentialMap):
     pass
 

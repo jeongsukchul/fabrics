@@ -5,11 +5,11 @@ import logging
 from copy import deepcopy
 
 from fabrics.diffGeometry.spec import Spec, checkCompatability, TorchSpec
-from fabrics.diffGeometry.diffMap import DifferentialMap, DynamicDifferentialMap
+from fabrics.diffGeometry.diffMap import DifferentialMap, DynamicDifferentialMap, TorchDifferentialMap
 
 from fabrics.helpers.functions import joinRefTrajs
-from fabrics.helpers.variables import Variables
-from fabrics.helpers.casadiFunctionWrapper import CasadiFunctionWrapper
+from fabrics.helpers.variables import Variables, TorchVariables
+from fabrics.helpers.casadiFunctionWrapper import CasadiFunctionWrapper, TorchFunctionWrapper
 
 from fabrics.helpers.constants import eps
 import torch
@@ -29,32 +29,80 @@ class TorchLagrangian(object):
     """only for basic Euler Lagrangian is implemented"""
     def __init__(self, l, **kwargs):
         # assert isinstance(l, baseEnergy)
-        self._l = l[0]
-        self.process_arguments(**kwargs)
+        self._l = l
+        vars = kwargs.get('var')
+        assert isinstance(vars, TorchVariables)
+        self._vars = vars
+
+        self._x = self._vars.position_variable()
+        self._xdot = self._vars.velocity_variable()
+
         self.applyEulerLagrange()
 
-    def process_arguments(self, **kwargs):
-            self._vars = kwargs.get('var')
+    def x(self):
+        func = lambda **kwargs : kwargs[self._x]
+        return TorchFunctionWrapper(function=func, variables = self._vars, name="x in Lagrangian")
 
+    def xdot(self):
+        func = lambda **kwargs : kwargs[self._xdot]
+        return TorchFunctionWrapper(function=func, variables = self._vars, name="xdot in Lagrangian")
+    
     def applyEulerLagrange(self):
+
         # Compute gradients and Jacobians using functorch
-        dL_dxdot = lambda x,xdot: functorch.grad(lambda xdot: self._l(x,xdot))(xdot)
-        dL_dx = lambda x, xdot: functorch.grad(lambda x: self._l(x, xdot))(x)
-        d2L_dxdxdot = lambda x, xdot: functorch.grad(lambda xdot: dL_dx(x,xdot))(xdot)
-        d2L_dxdot2 = lambda x, xdot: functorch.grad(lambda xdot: dL_dxdot(x,xdot))(xdot)
-        x = self._vars.position_variable()
-        f_rel = torch.zeros(x.shape[-1])
-        en_rel = torch.zeros(x.shape[-1])
+        dL_dxdot = self._l.grad(self._xdot)
+        dL_dx = self._l.grad(self._x)
+        d2L_dxdxdot = dL_dx.grad(self._xdot, end_grad=True)
+        d2L_dxdot2 = dL_dxdot.grad(self._xdot, end_grad=True)
 
         F = d2L_dxdxdot
+        F.set_name("F:d2L_dxdxdot")
         f_e = -dL_dx
         M = d2L_dxdot2
-        f = lambda x,xdot: F(x,xdot) @ xdot + f_e(x,xdot) + f_rel(x,xdot)
-        self._H = lambda x,xdot : dL_dxdot(x,xdot) @ xdot - self._l(x,xdot) + en_rel(x,xdot)
+        f = F.transpose() @ self.xdot() + f_e
+        f.set_name("lagrange f")
+        self._dL_dxdot = dL_dxdot
+        self._H = dL_dxdot @ self.xdot() - self._l 
         self._S = TorchSpec(M, f=f, var=self._vars)
 
-
     
+    def pull(self, dm: TorchDifferentialMap):
+        assert isinstance(dm, TorchDifferentialMap)
+        l = self._l.lowerLeaf(dm)
+        new_vars = TorchVariables(position = dm._vars._position, velocity= dm._vars._velocity, parameter_variables=dm._vars._parameter_variables | self._vars._parameter_variables)
+        # new_state_variables = dm.state_variables()
+        # new_parameters = {}
+        # new_parameters.update(self._vars.parameters())
+        # new_parameters.update(dm.params())
+        # new_vars = Variables(state_variables=new_state_variables, parameters=new_parameters).toTorch()
+        # if hasattr(dm, '_refTraj'):
+        #     refTrajs = [dm._refTraj] + [refTraj.pull(dm) for refTraj in self._refTrajs]
+        # else:
+        #     refTrajs = [refTraj.pull(dm) for refTraj in self._refTrajs]
+        # J_ref = dm._J
+        # if self.is_dynamic():
+        #     return TorchLagrangian(l, var=new_vars, J_ref=J_ref, ref_names=self.ref_names())
+        # else:
+            # return TorchLagrangian(l, var=new_vars, ref_names=self.ref_names())
+        return TorchLagrangian(l, var=new_vars)
+
+    def __add__(self, b):
+        assert isinstance(b, TorchLagrangian)
+        # checkCompatability(self, b)
+        # refTrajs = joinRefTrajs(self._refTrajs, b._refTrajs)
+        # ref_names = []
+        # if self.is_dynamic():
+        #     ref_names += self.ref_names()
+        #     J_ref = self._J_ref
+        # if b.is_dynamic():
+        #     ref_names += b.ref_names()
+        #     J_ref = b._J_ref
+        # if len(ref_names) > 0:
+        #     ref_arguments = {'ref_names': ref_names, 'J_ref': J_ref}
+        # else:
+        #     ref_arguments = {}
+        new_vars = self._vars + b._vars
+        return  TorchLagrangian(self._l + b._l, spec=self._S + b._S, hamiltonian=self._H + b._H, var=new_vars)
     
 class Lagrangian(object):
     """description"""
@@ -94,7 +142,6 @@ class Lagrangian(object):
         else:
             # print("EulerLagrange Applied with ", self._l, kwargs)
             self.applyEulerLagrange()
-
 
     def x_ref(self):
         return self._vars.parameter_by_name(self._x_ref_name)
@@ -162,7 +209,7 @@ class Lagrangian(object):
         M = d2L_dxdot2
         f = ca.mtimes(ca.transpose(F), self.xdot()) + f_e + f_rel
         self._H = ca.dot(dL_dxdot, self.xdot()) - self._l + en_rel
-        self._S = Spec(M, f=f, var=self._vars, refTrajs=self._refTrajs)
+        self._S = Spec(M, f=f, var=self._vars, refTrajs=self._refTrajs, l=self._l)
 
     def concretize(self):
         self._S.concretize()
@@ -171,6 +218,9 @@ class Lagrangian(object):
             var += refTraj._vars
         self._funs = CasadiFunctionWrapper(
             "funs", var, {"H": self._H}
+        )
+        self._L_funs = CasadiFunctionWrapper(
+            "L_funs", var, {"L": self._l}
         )
 
     def ref_names(self) -> list:
@@ -181,7 +231,8 @@ class Lagrangian(object):
         funs = self._funs.evaluate(**kwargs)
         H = funs['H']
         M, f, _ = self._S.evaluate(**kwargs)
-        return M, f, H
+        L = self._L_funs.evaluate(**kwargs)
+        return M, f, H, L
 
     def pull(self, dm: DifferentialMap):
         assert isinstance(dm, DifferentialMap)

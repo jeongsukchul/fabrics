@@ -3,9 +3,9 @@ import casadi as ca
 import numpy as np
 from copy import deepcopy
 import torch
+
 class ParameterNotFoundError(Exception):
     pass
-
 
 class Variables(object):
     def __init__(self, state_variables=None, parameters=None, parameters_values=None):
@@ -18,10 +18,10 @@ class Variables(object):
         self._state_variables = state_variables
         self._parameters = parameters
         self._parameters_values = parameters_values
-        if len(state_variables) > 0:
-            self._state_variable_names = list(state_variables.keys())
-        if len(parameters) > 0:
-            self._parameter_names = list(parameters.keys())
+        # if len(state_variables) > 0:
+        self._state_variable_names = list(state_variables.keys())
+        # if len(parameters) > 0:
+        self._parameter_names = list(parameters.keys())
 
     def state_variables(self):
         return self._state_variables
@@ -134,12 +134,45 @@ class Variables(object):
             + self._parameters.__str__()
         )
 
-class TorchVariables(Variables):
-    def __init__(self, state_variables=None, parameters=None, parameters_values=None, tensor_type=torch.float32):
-        # Initialize the superclass (Variables)
-        super().__init__(state_variables, parameters, parameters_values)
-        # Additional initialization for TorchVariables
-        self.tensor_type = tensor_type
+    def toTorch(self):
+        return TorchVariables(position= self._state_variable_names[0], velocity = self._state_variable_names[1], parameter_variables = set(self._parameter_names))
 
+class TorchVariables: # it gives only function variables name[key]  i will not use parameter for now
+    def __init__(self,  position='q', velocity ='qdot', parameter_variables = None):
+        # Initialize the superclass (Variables)
+        # Additional initialization for TorchVariables
+        self._position = position
+        self._velocity = velocity
+        if parameter_variables is None:
+            parameter_variables = set()
+        self._parameter_variables = parameter_variables
+        
     def __repr__(self):
-        return f"TorchVariables(state_variables={self._state_variables}, parameters={self._parameters}, tensor_type={self.tensor_type})"
+        return f"TorchVariables(position={self._position},velocity={self._velocity}, parameter={self._parameter_variables})"
+
+    def __add__(self, b):
+        if self._position != b._position or self._velocity != b._velocity:
+            raise Exception("Two Variables are in different space")
+        joined_parameter_variables = self._parameter_variables | b._parameter_variables
+        return TorchVariables(
+            position=self._position,
+            velocity=self._velocity,
+            parameter_variables=joined_parameter_variables,
+        )
+
+    def asArray(self):
+        return [self._position, self._velocity]+list(self._parameter_variables)
+    
+    def position_velocity_variables(self) -> set:
+        return [self._position, self._velocity]
+
+    def position_variable(self) -> str:
+        return self._position
+
+    def velocity_variable(self) -> str:
+        return self._velocity
+    
+    def add_parameter(self, name: str):   
+        self._parameter_variables = self._parameter_variables | {name}
+    def add_parameters(self, _set: set):   
+        self._parameter_variables = self._parameter_variables | _set

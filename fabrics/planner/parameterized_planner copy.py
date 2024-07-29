@@ -155,7 +155,6 @@ class ParameterizedFabricPlanner(object):
         self._variables = self._variables + pulled_geometry._vars
 
     def add_leaf(self, leaf: Leaf, prime_leaf: bool= False) -> None:
-        print("leaf, ", leaf._leaf_name)
         if isinstance(leaf, GenericAttractor):
             self.add_forcing_geometry(leaf.map(), leaf.lagrangian(), leaf.geometry(), prime_leaf)
         elif isinstance(leaf, GenericDynamicAttractor):

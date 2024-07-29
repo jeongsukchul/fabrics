@@ -15,6 +15,7 @@ from mpscenes.obstacles.sphere_obstacle import SphereObstacle
 from fabrics.planner.parameterized_planner import ParameterizedFabricPlanner, TorchPlanner
 
 import time
+import torch
 # TODO: Angle cannot be read through the FullSensor
 
 def initalize_environment(render=True, obstacle_resolution = 8):
@@ -45,7 +46,7 @@ def initalize_environment(render=True, obstacle_resolution = 8):
     # goal_orientation = [1.0, 0.0, 0.0, 0.0]
     rotation_matrix = quaternionic.array(goal_orientation).to_rotation_matrix
     whole_position = [0.3, 0.2, 1] #[0.1, 0.6, 0.8]
-    whole_position_obstacles = [10.1, 10.6, 10.8]
+    # whole_position_obstacles = [10.1, 10.6, 10.8]
     # for i in range(obstacle_resolution + 1):
     #     angle = i/obstacle_resolution * 2.*np.pi
     #     origin_position = [
@@ -63,7 +64,7 @@ def initalize_environment(render=True, obstacle_resolution = 8):
     goal_dict = {
         "subgoal0": {
             "weight": 1.0,
-            "is_primary_goal": False,
+            "is_primary_goal": True,
             "indices": [0, 1, 2],
             "parent_link": "panda_link0",
             "child_link": "panda_hand",
@@ -71,17 +72,17 @@ def initalize_environment(render=True, obstacle_resolution = 8):
             "epsilon": 0.05,
             "type": "staticSubGoal",
         },
-        "subgoal1": {
-            "weight": 3.0,
-            "is_primary_goal": True,
-            "indices": [0, 1, 2],
-            "parent_link": "panda_link7",
-            "child_link": "panda_hand",
-            "desired_position": [0.107, 0.0, 0.0],
-            "angle": goal_orientation,
-            "epsilon": 0.05,
-            "type": "staticSubGoal",
-        }
+        # "subgoal1": {
+        #     "weight": 1,
+        #     "is_primary_goal": True,
+        #     "indices": [0, 1, 2],
+        #     "parent_link": "panda_link7",
+        #     "child_link": "panda_hand",
+        #     "desired_position": [0.107, 0.0, 0.0],
+        #     "angle": goal_orientation,
+        #     "epsilon": 0.05,
+        #     "type": "staticSubGoal",
+        # }
     }
     goal = GoalComposition(name="goal", content_dict=goal_dict)
     env.reset(pos=q0)
@@ -148,15 +149,15 @@ def set_planner(goal: GoalComposition, degrees_of_freedom: int = 7, obstacle_res
         forward_kinematics,
     )
     planner2 = TorchPlanner(degrees_of_freedom, forward_kinematics)
-    panda_limits = [
-            [-2.8973, 2.8973],
-            [-1.7628, 1.7628],
-            [-2.8973, 2.8973],
-            [-3.0718, -0.0698],
-            [-2.8973, 2.8973],
-            [-0.0175, 3.7525],
-            [-2.8973, 2.8973]
-        ]
+    # panda_limits = [
+    #         [-2.8973, 2.8973],
+    #         [-1.7628, 1.7628],
+    #         [-2.8973, 2.8973],
+    #         [-3.0718, -0.0698],
+    #         [-2.8973, 2.8973],
+    #         [-0.0175, 3.7525],
+    #         [-2.8973, 2.8973]
+    #     ]
     collision_links = ['panda_link1', 'panda_link4', 'panda_link6', 'panda_hand']
     self_collision_pairs = {}
     # The planner hides all the logic behind the function set_components.
@@ -164,13 +165,20 @@ def set_planner(goal: GoalComposition, degrees_of_freedom: int = 7, obstacle_res
         collision_links=collision_links,
         goal=goal,
         number_obstacles=obstacle_resolution,
-        limits=panda_limits,
+        # limits=panda_limits,
+    )
+    planner2.set_components(
+        collision_links=collision_links,
+        goal=goal,
+        number_obstacles=obstacle_resolution,
+        # limits=panda_limits,
     )
     planner.concretize()
-    return planner
+    return planner, planner2
 
 
 def run_panda_ring_example(n_steps=5000, render=True, serialize=False, planner=None):
+    torch.set_printoptions(precision=8)
     obstacle_resolution_ring = 0
     (env, goal) = initalize_environment(
         render=render,
@@ -180,7 +188,7 @@ def run_panda_ring_example(n_steps=5000, render=True, serialize=False, planner=N
     ob, *_ = env.step(action)
     env.reconfigure_camera(1.4000000953674316, 67.9999008178711, -31.0001220703125, (-0.4589785635471344, 0.23635289072990417, 0.3541859984397888))
     if not planner:
-        planner = set_planner(goal, obstacle_resolution = obstacle_resolution_ring)
+        planner1, planner2 = set_planner(goal, obstacle_resolution = obstacle_resolution_ring)
         # Serializing the planner is optional
         if serialize:
             planner.serialize('serialized_10.pbz2')
@@ -190,10 +198,51 @@ def run_panda_ring_example(n_steps=5000, render=True, serialize=False, planner=N
     goal_orientation = [-0.366, 0.0, 0.0, 0.3305]
 
     sub_goal_0_quaternion = quaternionic.array(goal_orientation)
-
+    
     sub_goal_0_rotation_matrix = sub_goal_0_quaternion.to_rotation_matrix
     obstacle_resolution_ring-=1
-    prev_time = time.time()
+    cur_time = time.time()
+    print("=======================================================================================")
+    ob_robot = ob['robot_0']
+    x_obsts = [
+        ob_robot['FullSensor']['obstacles'][i+2]['position'] for i in range(obstacle_resolution_ring)
+    ]
+    radius_obsts = [
+        ob_robot['FullSensor']['obstacles'][i+2]['size'] for i in range(obstacle_resolution_ring)
+    ]
+
+    # planner1.test_init_function(
+    #     q=ob_robot["joint_state"]["position"],
+    #     qdot=ob_robot["joint_state"]["velocity"],
+    #     x_obsts=x_obsts,
+    #     radius_obsts=radius_obsts,
+    #     x_goal_0=ob_robot['FullSensor']['goals'][obstacle_resolution_ring+3]['position'],
+    #     weight_goal_0=ob_robot['FullSensor']['goals'][obstacle_resolution_ring+3]['weight'],
+    #     x_goal_1=ob_robot['FullSensor']['goals'][obstacle_resolution_ring+4]['position'],
+    #     weight_goal_1=ob_robot['FullSensor']['goals'][obstacle_resolution_ring+4]['weight'],
+    #     radius_body_panda_link1=0.1,
+    #     radius_body_panda_link4=0.1,
+    #     radius_body_panda_link6=0.15,
+    #     radius_body_panda_hand=0.1,
+    #     angle_goal_1=np.array(sub_goal_0_rotation_matrix),
+    # )
+    
+    # planner2.test_init_function(
+    #     q=torch.from_numpy(ob_robot["joint_state"]["position"]).type(torch.float64),
+    #     qdot=torch.from_numpy(ob_robot["joint_state"]["velocity"]).type(torch.float64),
+    #     x_obsts=x_obsts,
+    #     radius_obsts=radius_obsts,
+    #     x_goal_0=torch.from_numpy(ob_robot['FullSensor']['goals'][obstacle_resolution_ring+3]['position']).type(torch.float64),
+    #     weight_goal_0=torch.from_numpy(ob_robot['FullSensor']['goals'][obstacle_resolution_ring+3]['weight']).type(torch.float64),
+    #     x_goal_1=torch.from_numpy(ob_robot['FullSensor']['goals'][obstacle_resolution_ring+4]['position']).type(torch.float64),
+    #     weight_goal_1=torch.from_numpy(ob_robot['FullSensor']['goals'][obstacle_resolution_ring+4]['weight']).type(torch.float64),
+    #     radius_body_panda_link1=0.1,
+    #     radius_body_panda_link4=0.1,
+    #     radius_body_panda_link6=0.15,
+    #     radius_body_panda_hand=0.1,
+    #     angle_goal_1=torch.tensor(sub_goal_0_rotation_matrix, dtype= torch.float64),
+    # )
+    
     for _ in range(n_steps):
         ob_robot = ob['robot_0']
         x_obsts = [
@@ -202,28 +251,89 @@ def run_panda_ring_example(n_steps=5000, render=True, serialize=False, planner=N
         radius_obsts = [
             ob_robot['FullSensor']['obstacles'][i+2]['size'] for i in range(obstacle_resolution_ring)
         ]
-        action = planner.compute_action(
+        prev_time = time.time()
+        action1 = planner1.compute_action(
             q=ob_robot["joint_state"]["position"],
             qdot=ob_robot["joint_state"]["velocity"],
             x_obsts=x_obsts,
             radius_obsts=radius_obsts,
             x_goal_0=ob_robot['FullSensor']['goals'][obstacle_resolution_ring+3]['position'],
             weight_goal_0=ob_robot['FullSensor']['goals'][obstacle_resolution_ring+3]['weight'],
-            x_goal_1=ob_robot['FullSensor']['goals'][obstacle_resolution_ring+4]['position'],
-            weight_goal_1=ob_robot['FullSensor']['goals'][obstacle_resolution_ring+4]['weight'],
+            # x_goal_1=ob_robot['FullSensor']['goals'][obstacle_resolution_ring+4]['position'],
+            # weight_goal_1=ob_robot['FullSensor']['goals'][obstacle_resolution_ring+4]['weight'],
             radius_body_panda_link1=0.1,
             radius_body_panda_link4=0.1,
             radius_body_panda_link6=0.15,
             radius_body_panda_hand=0.1,
-            angle_goal_1=np.array(sub_goal_0_rotation_matrix),
+            # angle_goal_1=np.array(sub_goal_0_rotation_matrix),
+        )
+        cur_time = time.time()
+        print("dt1", cur_time-prev_time)
+        prev_time = time.time()
+        action2= planner2.compute_action(
+            q=torch.from_numpy(ob_robot["joint_state"]["position"]).type(torch.float64),
+            qdot=torch.from_numpy(ob_robot["joint_state"]["velocity"]).type(torch.float64),
+            x_obsts=x_obsts,
+            radius_obsts=radius_obsts,
+            x_goal_0=torch.from_numpy(ob_robot['FullSensor']['goals'][obstacle_resolution_ring+3]['position']).type(torch.float64),
+            weight_goal_0=torch.from_numpy(ob_robot['FullSensor']['goals'][obstacle_resolution_ring+3]['weight']).type(torch.float64),
+            # x_goal_1=torch.from_numpy(ob_robot['FullSensor']['goals'][obstacle_resolution_ring+4]['position']).type(torch.float64),
+            # weight_goal_1=torch.from_numpy(ob_robot['FullSensor']['goals'][obstacle_resolution_ring+4]['weight']).type(torch.float64),
+            radius_body_panda_link1=0.1,
+            radius_body_panda_link4=0.1,
+            radius_body_panda_link6=0.15,
+            radius_body_panda_hand=0.1,
+            # angle_goal_1=torch.tensor(sub_goal_0_rotation_matrix, dtype= torch.float64),
         )
         
-        ob, *_ = env.step(action)
         cur_time = time.time()
-        prev_time = cur_time
+        print("dt2", cur_time-prev_time)
+        # U,S1,V = np.linalg.svd(M1)
+        # U,S2,V = np.linalg.svd(M2)
+        print("action1", action1)
+        print("action2", action2)
+        # print("S1", S1)
+        # print("S2", S2)
+        # print("J1", J1)
+        # print("J2", J2)
+        # print("J",np.sum(J2.numpy()-J1))
+        # print("Jdot",np.sum(Jdot2.numpy()-Jdot1))
+        # print("qdot",J2.numpy()@ -Jdot1))
+        ob, *_ = env.step(action1)
+        
+
+    # for _ in range(n_steps):
+    #     ob_robot = ob['robot_0']
+    #     x_obsts = [
+    #         ob_robot['FullSensor']['obstacles'][i+2]['position'] for i in range(obstacle_resolution_ring)
+    #     ]
+    #     radius_obsts = [
+    #         ob_robot['FullSensor']['obstacles'][i+2]['size'] for i in range(obstacle_resolution_ring)
+    #     ]
+    #     action = planner2.compute_action(
+    #     q=torch.from_numpy(ob_robot["joint_state"]["position"]).type(torch.float64),
+    #     qdot=torch.from_numpy(ob_robot["joint_state"]["velocity"]).type(torch.float64),
+    #     x_obsts=x_obsts,
+    #     radius_obsts=radius_obsts,
+    #     x_goal_0=torch.from_numpy(ob_robot['FullSensor']['goals'][obstacle_resolution_ring+3]['position']).type(torch.float64),
+    #     weight_goal_0=torch.from_numpy(ob_robot['FullSensor']['goals'][obstacle_resolution_ring+3]['weight']).type(torch.float64),
+    #     # x_goal_1=torch.from_numpy(ob_robot['FullSensor']['goals'][obstacle_resolution_ring+4]['position']).type(torch.float64),
+    #     # weight_goal_1=torch.from_numpy(ob_robot['FullSensor']['goals'][obstacle_resolution_ring+4]['weight']).type(torch.float64),
+    #     radius_body_panda_link1=0.1,
+    #     radius_body_panda_link4=0.1,
+    #     radius_body_panda_link6=0.15,
+    #     radius_body_panda_hand=0.1,
+    #     # angle_goal_1=torch.tensor(sub_goal_0_rotation_matrix, dtype= torch.float64),
+    #     )
+    #     output = action.detach().numpy()
+    #     # print("action", type(output))
+    #     ob, *_ = env.step(output)
+    #     cur_time = time.time()
+    #     print("dt", cur_time-prev_time)
+    #     prev_time = cur_time
     env.close()
     return {}
 
 
 if __name__ == "__main__":
-    res = run_panda_ring_example(n_steps=10000, serialize = True)
+    res = run_panda_ring_example(n_steps=10000, serialize = False)

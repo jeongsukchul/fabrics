@@ -11,19 +11,16 @@ import logging
 import torch, functorch
 from fabrics.helpers.constants import eps
 
-# from functorch._C import GradTrackingTensor
 
 class InputMissmatchError(Exception):
     pass
 
 class TorchFunctionWrapper(object):
-    _instances = []
-    def __init__(self, variables: TorchVariables, expression=None, function=None, ex_input=None, name = None, iscasadi= False, use_cache=True):
+    def __init__(self, variables: TorchVariables, expression=None, function=None, ex_input=None, name = None, iscasadi= False):
         self._variables = variables
         self._inputs = variables.asArray()
         self._name = name
-        self._use_cache = use_cache
-        self._cache = None
+        self.call_count = 0
         if expression is not None:
             self._expression = expression 
             self._ex_input = ex_input
@@ -35,24 +32,18 @@ class TorchFunctionWrapper(object):
             # self._func = lambda **kwargs : self._expression(*{kwargs[input] for input in ex_input})
         else:
             self._func = function
-        TorchFunctionWrapper._instances.append(self)
     def TorchFunctionOperator(self, other,operator_type='add'):
         combined_variables = self._variables + other._variables
         # print(self._name , " ",  operator_type ," ", other._name)
 
         def combined_func(**kwargs):
-            result1 = self(**{input: kwargs[input] for input in self._inputs})
-            result2 = other(**{input: kwargs[input] for input in other._inputs})
-                
+            result1 = self._func(**{input: kwargs[input] for input in self._inputs})
+            result2 = other._func(**{input: kwargs[input] for input in other._inputs})
+            # print("result1 ", result1)
+            # print("result2", result2)
             # print("f1 name", self._name)
             # print("f2 name", other._name)
             # print("opeartor type", operator_type)
-
-            # print("f1 input",{input: kwargs[input] for input in self._inputs})
-            # print("f2 input",{input: kwargs[input] for input in other._inputs})
-
-            # print("result1 ", result1)
-            # print("result2", result2)
 
             if operator_type == 'add':
                 return result1 + result2
@@ -68,49 +59,48 @@ class TorchFunctionWrapper(object):
                 return result1 / result2
             if operator_type == 'dot':
                 return torch.sum(result1 * result2, dim=-1)
-                # return torch.tensordot(result1, result2, dims=([-1], [-1]))
         return TorchFunctionWrapper(function=combined_func, variables=combined_variables)
     def __neg__(self):
-        func = lambda **kwargs : -self(**kwargs)
+        func = lambda **kwargs : -self._func(**kwargs)
         return TorchFunctionWrapper(function=func, variables=self._variables)
     def __mul__(self, other):
         if isinstance(other, TorchFunctionWrapper):
             return self.TorchFunctionOperator(other, 'mul')
         else:
-            func = lambda **kwargs : self(**kwargs)*other
+            func = lambda **kwargs : self._func(**kwargs)*other
             return TorchFunctionWrapper(function=func, variables=self._variables)
     def __rmul__(self,other):
-        func = lambda **kwargs : other*self(**kwargs)
+        func = lambda **kwargs : other*self._func(**kwargs)
         return self.TorchFunctionWrapper(function=func, variables=self._variables)
     def __truediv__(self, other):
         if isinstance(other, TorchFunctionWrapper):
             return self.TorchFunctionOperator(other, 'div')
         else:
-            func = lambda **kwargs : self(**kwargs)/other
+            func = lambda **kwargs : self._func(**kwargs)/other
             return TorchFunctionWrapper(function=func, variables=self._variables)
     def __rtruediv__(self,other):
 
-        func = lambda **kwargs : other/self(**kwargs)
+        func = lambda **kwargs : other/self._func(**kwargs)
         return TorchFunctionWrapper(function=func, variables=self._variables)
 
     def __add__(self, other):
         if isinstance(other, TorchFunctionWrapper):
             return self.TorchFunctionOperator(other, 'add')
         else: 
-            func = lambda **kwargs : self(**kwargs)+other
+            func = lambda **kwargs : self._func(**kwargs)+other
             return TorchFunctionWrapper(function=func, variables=self._variables)
 
     def __radd__(self, other):
-        func = lambda **kwargs : self(**kwargs)+other            
+        func = lambda **kwargs : self._func(**kwargs)+other            
         return TorchFunctionWrapper(function=func, variables=self._variables)
     def __sub__(self,other):        
         if isinstance(other, TorchFunctionWrapper):
             return self.TorchFunctionOperator(other, 'sub')
         else:
-            func = lambda **kwargs : self(**kwargs)-other
+            func = lambda **kwargs : self._func(**kwargs)-other
             return TorchFunctionWrapper(function=func, variables=self._variables)
     def __rsub__(self,other):
-        func = lambda **kwargs : other - self(**kwargs)            
+        func = lambda **kwargs : other - self._func(**kwargs)            
         return TorchFunctionWrapper(function=func, variables=self._variables)
     def __matmul__(self, other):
         if isinstance(other, TorchFunctionWrapper):
@@ -121,21 +111,36 @@ class TorchFunctionWrapper(object):
             #     print("func", func)
             #     print("other", other)
             #     return func@ other
-            func = lambda **kwargs : self(**kwargs) @ other            
+            func = lambda **kwargs : self._func(**kwargs) @ other            
             return TorchFunctionWrapper(function= func, variables=self._variables) 
         else:
             raise TypeError   
     def __rmatmul__(self, other):
         if isinstance(other, torch.Tensor):
-            func = lambda **kwargs : other @ self(**kwargs)          
+            func = lambda **kwargs : self._func(**kwargs)@other            
             return TorchFunctionWrapper(function=func, variables=self._variables) 
         else:
             raise TypeError   
+    def grad(self, variable, end_grad=False):
+        if variable not in self._inputs:
+            raise Exception("Gradient variable is not in the function!")
 
+        index = self._inputs.index(variable)
+        def wrapper_fn(*args):
+            kwargs = {self._inputs[i]: args[i] for i in range(len(args))}
+            return self._func(**kwargs)
+        grad_fn = torch.func.jacfwd(wrapper_fn, argnums=index)
+        def grad_func(**kwargs):
+            args = [kwargs[input] for input in self._inputs]
+            if end_grad:
+                return grad_fn(*args).detach().type(torch.float64)
+            else:
+                return grad_fn(*args).type(torch.float64)
+        return TorchFunctionWrapper(function=grad_func, variables=self._variables)
 
     def pinv(self):
         def inv(**kwargs):
-            M = self(**kwargs)
+            M = self._func(**kwargs)
             M_reg = M+ eps*torch.eye(M.size(0))
 
             # U, S, V = torch.svd(M_reg)
@@ -151,9 +156,15 @@ class TorchFunctionWrapper(object):
         return self.TorchFunctionOperator(other,'dot')
     def transpose(self):
 
-        func= lambda **kwargs: torch.transpose(self(**kwargs),-2,-1)
+        func= lambda **kwargs: torch.transpose(self._func(**kwargs),-2,-1)
         return TorchFunctionWrapper(function=func, variables=self._variables)
     
+    def __call__(self, **kwargs):
+        self.call_count += 1
+        print("name", self._name)
+        print("call_count", self.call_count)
+        print("varaibles", self._variables)
+        return self._func(**kwargs)
 
     def lowerLeaf(self, dm):
         from fabrics.diffGeometry.diffMap import TorchDifferentialMap
@@ -165,59 +176,28 @@ class TorchFunctionWrapper(object):
         vars = TorchVariables(position=q, velocity =qdot,\
                               parameter_variables= (dm._vars._parameter_variables | self._variables._parameter_variables))
         def lowerLeafFunc(**lower_leaf_kwargs):
-            # print("lower_leaf kwargs", lower_leaf_kwargs)
             
             upper_leaf_kwargs = lower_leaf_kwargs
             upper_leaf_kwargs[x] = dm._phi(**lower_leaf_kwargs)
             upper_leaf_kwargs[xdot] = dm._J(**lower_leaf_kwargs) @ lower_leaf_kwargs[qdot]
             del upper_leaf_kwargs[q]
             del upper_leaf_kwargs[qdot]
-            
-            # print("J", dm._J(**lower_leaf_kwargs))
-
             # print("upper+leaf_kwargs", upper_leaf_kwargs)
-            return self(**upper_leaf_kwargs)
+            # print("lower_leaf kwargs", lower_leaf_kwargs)
+            return self._func(**upper_leaf_kwargs)
         return TorchFunctionWrapper(function=lowerLeafFunc, variables = vars)
 
     def set_name(self, name:str):
         self._name = name
     def name(self):
         return self._name
+    def cache_result(self):
+        def cached_func(**kwargs):
+            if not hasattr(self, '_cached_result'):
+                self._cached_result = self._func(**kwargs)
+            return self._cached_result
+        return TorchFunctionWrapper(function=cached_func, variables=self._variables)
 
-    def grad(self, variable, end_grad=False):
-        if variable not in self._inputs:
-            raise Exception("Gradient variable is not in the function!")
-
-        index = self._inputs.index(variable)
-        def wrapper_fn(*args):
-            kwargs = {self._inputs[i]: args[i] for i in range(len(args))}
-            return self._func(**kwargs)
-        grad_fn = torch.func.jacrev(wrapper_fn, argnums=index)
-        def grad_func(**kwargs):
-            args = [kwargs[input] for input in self._inputs]
-            if end_grad:
-                return grad_fn(*args).detach().type(torch.float64)
-            else:
-                return grad_fn(*args).type(torch.float64)
-        return TorchFunctionWrapper(function=grad_func, variables=self._variables)
-    
-    def __call__(self, **kwargs):
-        if self._cache is None:
-            if self._use_cache:
-                self._cache = self._func(**kwargs)
-                return self._cache
-            else:
-                return self._func(**kwargs)
-        else:
-            # print("use_cache", self._cache)
-            return self._cache
-    @classmethod
-    def reset_all_caches(cls):
-        for instance in cls._instances:
-            instance.reset_cache()
-
-    def reset_cache(self):
-        self._cache = None
 class CasadiFunctionWrapper(object):
 
     def __init__(self, name: str, variables: Variables, expressions: dict):
@@ -243,19 +223,14 @@ class CasadiFunctionWrapper(object):
             pickle.dump(list(self._expressions.keys()), f)
             pickle.dump(self._input_keys, f)
             pickle.dump(self._argument_dictionary, f)
-    def detach_numpy(self,tensor):
-        tensor = tensor.detach().cpu()
-        if torch._C._functorch.is_gradtrackingtensor(tensor):
-            tensor = torch._C._functorch.get_unwrapped(tensor)
-            return np.array(tensor.storage().tolist()).reshape(tensor.shape)
-        return tensor.numpy()
+
     def evaluate(self, **kwargs):
         # print("evaluate : ", kwargs)
         for key in kwargs: # pragma no cover
             # print("key:",key)
             if isinstance(kwargs[key],torch.Tensor):
-                # value = torch.tensor(kwargs[key].cpu().numpy())
-                kwargs[key] = self.detach_numpy(kwargs[key])
+                value = torch.tensor(kwargs[key].cpu().numpy())
+                kwargs[key] = kwargs[key].detach().numpy().astype(np.float64)
             if key == 'x_obst' or key == 'x_obsts':
                 obstacle_dictionary = {}
                 for j, x_obst_j in enumerate(kwargs[key]):

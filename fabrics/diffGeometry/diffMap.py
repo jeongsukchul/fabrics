@@ -1,9 +1,9 @@
 import casadi as ca
 import numpy as np
 
-from fabrics.helpers.casadiFunctionWrapper import CasadiFunctionWrapper
-from fabrics.helpers.variables import Variables
-import functorch
+from fabrics.helpers.casadiFunctionWrapper import CasadiFunctionWrapper, TorchFunctionWrapper
+from fabrics.helpers.variables import Variables, TorchVariables
+import torch
 class TorchDifferentialMap:
     _vars: Variables
     _J: ca.SX
@@ -14,30 +14,41 @@ class TorchDifferentialMap:
         Jdot_sign = -1
         if 'Jdot_sign' in kwargs.keys():
             Jdot_sign = kwargs.get('Jdot_sign')
-        self._vars.verify()
-        self._phi = phi
         q = self._vars.position_variable()
         qdot = self._vars.velocity_variable()
-        self._J = lambda q: functorch.jvp(phi,q)
-        self._Jdot = lambda q,qdot: Jdot_sign * functorch.jvp(self._J(q) @ qdot,q)
-
-    def Jdotqdot(self):
-        return lambda q, qdot: self._Jdot(q,qdot) @ qdot
-
-    def phidot(self):
-        return lambda q, qdot: self._J(q) @ qdot
-
+        J = ca.jacobian(phi,q)
+        Jdot = Jdot_sign * ca.jacobian(ca.mtimes(J, qdot), q)
+        # phidot = ca.mtimes(J, qdot)
+        self._caFunc = CasadiFunctionWrapper(
+            "funs", self._vars, {"phi": phi, "J":J, "Jdot": Jdot}
+        )
+        inputs = list(self._caFunc._inputs.keys())
+        self._q = inputs[0]
+        self._qdot = inputs[1]
+        self._vars = TorchVariables(position = self._q, velocity = self._qdot, parameter_variables=set(inputs[2:]))
+        casadi = lambda **inputs: self._caFunc.evaluate(**inputs)
+        self._phi = TorchFunctionWrapper(function=lambda **inputs: torch.tensor(casadi(**inputs)["phi"],dtype=torch.float64), variables=self._vars, name="dm.phi", iscasadi=True)
+        self._J = TorchFunctionWrapper(function=lambda **inputs: torch.tensor(casadi(**inputs)["J"],dtype=torch.float64), variables=self._vars,name="dm.J",iscasadi=True)
+        self._Jdot = TorchFunctionWrapper(function=lambda **inputs: torch.tensor(casadi(**inputs)["Jdot"],dtype=torch.float64), variables=self._vars,name="dm._Jdot",iscasadi=True)
+        self._Jdotqdot =self._Jdot @ self.qdot()   
+        self._Jdotqdot.set_name("Jdotqdot")
+        # self.f_phi = ca.Function('f_phi', [q], [self._phi])
+        # self.f_J = ca.Function('f_J', [q, qdot], [self._J])
+        # self.f_Jdot = ca.Function('f_Jdot', [q, qdot], [self._Jdot])
+        
     def params(self) -> dict:
         return self._vars.parameters()
+    
+    def q(self):
+        func = lambda **kwargs : kwargs[self._vars._position]
+        return TorchFunctionWrapper(function=func, variables = self._vars, name="q in DiffMap")
 
-    def state_variables(self) -> dict:
-        return self._vars.state_variables()
+    def qdot(self):
+        func = lambda **kwargs : kwargs[self._vars._velocity]
+        return TorchFunctionWrapper(function=func, variables = self._vars, name= "qdot in DiffMap")
+    
 
-    def forward(self, q, qdot):
-        x = self._phi(q)
-        J = self._J(q)
-        Jdot = self._Jdot(q,qdot)
-        return x, J, Jdot
+
 class DifferentialMap:
     _vars: Variables
     _J: ca.SX
@@ -55,8 +66,11 @@ class DifferentialMap:
         q = self._vars.position_variable()
         qdot = self._vars.velocity_variable()
         self._J = ca.jacobian(phi, q)
+        self._phidot = ca.mtimes(self._J, qdot)
         self._Jdot = Jdot_sign * ca.jacobian(ca.mtimes(self._J, qdot), q)
-
+        # self.f_phi = ca.Function('f_phi', [q], [self._phi])
+        # self.f_J = ca.Function('f_J', [q, qdot], [self._J])
+        # self.f_Jdot = ca.Function('f_Jdot', [q, qdot], [self._Jdot])
     def Jdotqdot(self) -> ca.SX:
         return ca.mtimes(self._Jdot, self.qdot())
 
@@ -65,9 +79,8 @@ class DifferentialMap:
 
     def concretize(self) -> None:
         self._funs = CasadiFunctionWrapper(
-            "funs", self._vars, {"phi": self._phi, "J": self._J, "Jdot": self._Jdot}
+            "funs", self._vars, {"phi": self._phi, "phidot": self._phidot, "J":self._J, "Jdot": self._Jdot}
         )
-
     def params(self) -> dict:
         return self._vars.parameters()
 
@@ -77,9 +90,10 @@ class DifferentialMap:
     def forward(self, **kwargs):
         evaluations = self._funs.evaluate(**kwargs)
         x = evaluations['phi']
+        xdot = evaluations['phidot']
         J = evaluations['J']
         Jdot = evaluations['Jdot']
-        return x, J, Jdot
+        return x, xdot, J, Jdot
 
     def q(self):
         return self._vars.position_variable()

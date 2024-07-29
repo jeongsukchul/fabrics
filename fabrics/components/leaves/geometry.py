@@ -10,10 +10,9 @@ from fabrics.components.maps.parameterized_maps import (
 from fabrics.diffGeometry.diffMap import DifferentialMap, ExplicitDifferentialMap
 from fabrics.diffGeometry.geometry import Geometry
 from fabrics.diffGeometry.energy import Lagrangian
-from fabrics.components.leaves.leaf import Leaf
+from fabrics.components.leaves.leaf import Leaf, TorchLeaf
 from fabrics.helpers.variables import Variables
 from fabrics.helpers.functions import parse_symbolic_input
-
 
 class GenericGeometryLeaf(Leaf):
 

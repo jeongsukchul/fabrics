@@ -1,14 +1,77 @@
 import casadi as ca
 import numpy as np
 
-from fabrics.components.maps.parameterized_maps import ParameterizedGoalMap
-from fabrics.diffGeometry.geometry import Geometry
-from fabrics.diffGeometry.energy import Lagrangian
-from fabrics.components.leaves.leaf import Leaf
-from fabrics.helpers.variables import Variables
+from fabrics.components.maps.parameterized_maps import ParameterizedGoalMap, TorchParameterizedGoalMap
+from fabrics.diffGeometry.geometry import Geometry, TorchGeometry
+from fabrics.diffGeometry.energy import Lagrangian, TorchLagrangian
+from fabrics.components.leaves.leaf import Leaf, TorchLeaf
+from fabrics.helpers.variables import Variables, TorchVariables
 from fabrics.helpers.functions import parse_symbolic_input
+from fabrics.planner.configuration_classes import attractorMetric
+from fabrics.planner.configuration_classes import attractorPotential
+from fabrics.helpers.casadiFunctionWrapper import TorchFunctionWrapper
 
+import torch, functorch
 
+class TorchGenericAttractor(TorchLeaf):
+    def __init__(
+        self, root_variables: Variables, fk_goal: ca.SX, attractor_name: str
+    ):
+        goal_dimension = fk_goal.size()[0]
+        super().__init__(
+            root_variables,
+            f"{attractor_name}_leaf",
+            fk_goal,
+            dim=goal_dimension,
+        )
+        self.set_forward_map(attractor_name)
+    def set_forward_map(self, goal_name):
+        reference_name = f"x_{goal_name}"
+        weight_name = f"weight_{goal_name}"
+        goal_dimension = self._forward_kinematics.size()[0]
+        if reference_name in self._parent_variables.parameters():
+            reference_variable = self._parent_variables.parameters()[
+                reference_name
+            ]
+        else:
+            reference_variable = ca.SX.sym(reference_name, goal_dimension)
+        if weight_name in self._parent_variables.parameters():
+            weight_variable = self._parent_variables.parameters()[
+                weight_name
+            ]
+        else:
+            weight_variable = ca.SX.sym(weight_name, 1)
+        self._geo_parameters = {
+            reference_name: reference_variable,
+            weight_name: weight_variable
+        }
+        self._weight_name = weight_name
+        self._leaf_variables.add_parameters({reference_name, weight_name})
+        self._parent_variables.add_parameters(self._geo_parameters)
+        self._map = TorchParameterizedGoalMap(
+            self._parent_variables, self._forward_kinematics, reference_variable
+        )
+    def set_potential(self, potential: attractorPotential) -> None:
+        psi_ex = lambda x, xdot, weight_goal: (weight_goal * potential(x,xdot)).squeeze()
+        psi = TorchFunctionWrapper(expression= psi_ex, variables=self._leaf_variables,ex_input=(self._leaf_variables.position_velocity_variables()+[self._weight_name]), name="psi_set_potential")
+        self.psi=psi
+        h_psi = psi.grad(self._x, end_grad=True)
+        self.h_psi = h_psi
+        h_psi.set_name("h_psi")
+        self._geo = TorchGeometry(h=h_psi, var=self._leaf_variables)
+
+    def set_metric(self, attractor_metric: attractorMetric) -> None:
+        attractor_M = TorchFunctionWrapper(expression=attractor_metric, variables=self._leaf_variables,\
+                                            ex_input=self._leaf_variables.position_velocity_variables(),name="attractor_metric")
+        self._M = attractor_M
+        self._M.set_name("attractor M")
+        lagrangian_psi = self.xdot().dot(attractor_M @ self.xdot())
+        lagrangian_psi.set_name("lagrangian_psi")
+        self._lag = TorchLagrangian(lagrangian_psi, var=self._leaf_variables)
+        # new_parameters, attractor_metric = parse_symbolic_input(attractor_metric_expression, x, xdot, name=self._leaf_name)
+        # self._parent_variables.add_parameters(new_parameters)
+        # lagrangian_psi = ca.dot(xdot, ca.mtimes(attractor_metric, xdot))
+        # self._lag = Lagrangian(lagrangian_psi, var=self._leaf_v
 class GenericAttractor(Leaf):
     """
     The GenericAttractor is a leaf to the tree of fabrics.
@@ -68,6 +131,7 @@ class GenericAttractor(Leaf):
     def set_metric(self, attractor_metric_expression: str) -> None:
         x = self._leaf_variables.position_variable()
         xdot = self._leaf_variables.velocity_variable()
+
         new_parameters, attractor_metric = parse_symbolic_input(attractor_metric_expression, x, xdot, name=self._leaf_name)
         self._parent_variables.add_parameters(new_parameters)
         lagrangian_psi = ca.dot(xdot, ca.mtimes(attractor_metric, xdot))
