@@ -22,7 +22,7 @@ from fabrics.components.leaves.geometry import (AvoidanceLeaf,
                                                 CapsuleCuboidLeaf,
                                                 CapsuleSphereLeaf,
                                                 ESDFGeometryLeaf,
-                                                GenericGeometryLeaf, LimitLeaf,
+                                                GenericGeometryLeaf, LimitLeaf, TorchGenericGeometryLeaf, TorchLimitLeaf,
                                                 # TorchGenericGeometryLeaf,
                                                 ObstacleLeaf,
                                                 PlaneConstraintGeometryLeaf,
@@ -106,17 +106,18 @@ class TorchPlanner(object):
     
     """ ADDING COMPONENTS"""
     def add_geometry(
-        self, forward_map: TorchDifferentialMap, lagrangian: TorchLagrangian, geometry: Geometry
+        self, forward_map: TorchDifferentialMap, lagrangian: TorchLagrangian, geometry: Geometry , isLimit: bool = False
     ) -> None:
-        weighted_geometry =TorchWeightedGeometry(g=geometry, le=lagrangian)
+        weighted_geometry =TorchWeightedGeometry(g=geometry, le=lagrangian, isLimit = isLimit)
         self.add_weighted_geometry(forward_map, weighted_geometry)
     
     def add_weighted_geometry(
         self, forward_map: TorchDifferentialMap, weighted_geometry: TorchWeightedGeometry
     ) -> None:
         pulled_geometry = weighted_geometry.pull(forward_map)
+
         self._geometry += pulled_geometry
-        self._variables = self._variables + pulled_geometry._vars
+        # self._variables = self._variables + pulled_geometry._vars #이것도 마찬가지로 문제가 될 수 있는 부분
     
     def add_forcing_geometry(
         self,
@@ -136,11 +137,26 @@ class TorchPlanner(object):
             self._forced_forward_map = forward_map
         # self._variables = self._variables + self._forced_geometry._vars ### 일단 지금의 경우에는 같아서 무시하지만 나중에 문제가 될 수 있는 부분임
     
+    def add_limit_geometry(
+            self,
+            limits: torch.Tensor,
+            ) -> None:
+        lower_limit_geometry = TorchLimitLeaf(self._variables.toTorch(), limits[:,0], 0)
+        lower_limit_geometry.set_geometry(self._config.limit_geometry)
+        lower_limit_geometry.set_finsler_structure(self._config.limit_finsler)
+        upper_limit_geometry = TorchLimitLeaf(self._variables.toTorch(), limits[:,1], 1)
+        upper_limit_geometry.set_geometry(self._config.limit_geometry)
+        upper_limit_geometry.set_finsler_structure(self._config.limit_finsler)
+        self.add_leaf(lower_limit_geometry)
+        self.add_leaf(upper_limit_geometry)
+
     def add_leaf(self, leaf: Leaf, prime_leaf: bool= False) -> None:
         if isinstance(leaf, TorchGenericAttractor):
             self.add_forcing_geometry(leaf.map(), leaf.lagrangian(), leaf.geometry(), prime_leaf)
-        # elif isinstance(leaf, TorchGenericGeometryLeaf):
-        #     self.add_geometry(leaf.map(), leaf.lagrangian(), leaf.geometry())
+        elif isinstance(leaf, TorchLimitLeaf):
+            self.add_geometry(leaf.map(), leaf.lagrangian(), leaf.geometry(), isLimit=True)
+        elif isinstance(leaf, TorchGenericGeometryLeaf):
+            self.add_geometry(leaf.map(), leaf.lagrangian(), leaf.geometry())
         self.leaves[leaf._leaf_name] = leaf
     
     def get_leaves(self, leaf_names:list) -> List[Leaf]:
@@ -284,13 +300,16 @@ class TorchPlanner(object):
         self_collision_pairs: Optional[dict] = None,
         collision_links_esdf: Optional[list] = None,
         goal: Optional[GoalComposition] = None,
-        limits: Optional[list] = None,
+        limits: Optional[torch.Tensor] = None,
         number_obstacles: int = 1,
         number_dynamic_obstacles: int = 0,
         number_obstacles_cuboid: int = 0,
         number_plane_constraints: int = 0,
         dynamic_obstacle_dimension: int = 3,
     ):
+        if limits is not None:
+            # for joint_index in range(len(limits)):
+            self.add_limit_geometry(limits)
         if goal:
             self.set_goal_component(goal)
             # Adds default execution energy
@@ -322,38 +341,37 @@ class TorchPlanner(object):
         # self._geometry._le._S._M(**kwargs)
         # a_ex = self.a_ex(**kwargs)
         # beta = self.beta_subst(**kwargs)
-        attractor = self.leaves['goal_0_leaf']
-        not_pulled_geom = TorchWeightedGeometry(g=attractor.geometry(), le=attractor.lagrangian())
-        pulled_geom = not_pulled_geom.pull(attractor.map())
-        # self._forced_geometry._xddot(**kwargs)
-        # self._forced_geometry._Minv(**kwargs)
-        attractor_M = not_pulled_geom._M.lowerLeaf(attractor.map())
-        attractor_frac =  not_pulled_geom.frac.lowerLeaf(attractor.map())
-        attractor_alpha =  not_pulled_geom._alpha.lowerLeaf(attractor.map())
-        attractor_f =  not_pulled_geom._f.lowerLeaf(attractor.map())
-        attractor_le_M = not_pulled_geom._le._S._M.lowerLeaf(attractor.map())
-        attractor_le_f =  not_pulled_geom._le._S._f.lowerLeaf(attractor.map())
-        attractor_xddot =  not_pulled_geom._xddot.lowerLeaf(attractor.map())
+        # print("eta2", self.eta(**kwargs))
+        # print("a_ex2", self.a_ex(**kwargs))
+        # print("beta2", self.beta_subst(**kwargs))
+        # print("alpha2", self._forced_speed_controlled_geometry._alpha(**kwargs))
+        # print("base alpha2", self._geometry._alpha(**kwargs))
+
+        # # self._forced_geometry._xddot(**kwargs)
+        # # self._forced_geometry._Minv(**kwargs)
+
         # attractor_frac =  self._forced_geometry.frac
         # attractor_xddot =  self._forced_geometry._xddot
         # attractor_alpha =  self._forced_geometry._alpha
         # attractor_f =  self._forced_geometry._f
         # le_M = self._forced_geometry._le._S._M
         # attractor_lag_f =  self._forced_geometry._le._S._f
-        M = self._forced_geometry._M(**kwargs)
-        f = self._forced_geometry._f(**kwargs)
-        xddot = self._forced_geometry._xddot(**kwargs)
-        # alpha = self._forced_geometry._alpha(**kwargs)
-        frac = self._forced_geometry.frac(**kwargs)
+        # M = self._forced_geometry._M(**kwargs)
+        # f = self._forced_geometry._f(**kwargs)
+        # xddot = self._forced_geometry._xddot(**kwargs)
+        # # alpha = self._forced_geometry._alpha(**kwargs)
+        # frac = self._forced_geometry.frac(**kwargs)
         # le_M = self._forced_geometry._le._S._M(**kwargs)
         # le_f = self._forced_geometry._le._S._f(**kwargs)
+        # limit = self.leaves['limit_joint_1_leaf']
+        # limitgeom = TorchWeightedGeometry(g=limit._geo, le=limit._lag, isLimit = True).pull(limit.map())
+        # print("M2:", limitgeom._M(**kwargs))
+        # print(" f2:", limitgeom._f(**kwargs))
+        # print(" xddot2:", limitgeom._xddot(**kwargs))
+        # print("frac2:", limitgeom.frac(**kwargs))
+        # print("alpha2:", limitgeom._le._S._f(**kwargs))
 
-        # print("M2:", M)
-        # print("f2:", f)
-        # print("xddot2:", xddot)
-        # # print("alpha2:", alpha)
-        # print("frac2:", frac)
-        # print("le_M:", le_M)
+        # print("le_M:", limmile_M)
         # print("le_f:", le_f)
         # print("M2", attractor_M(**kwargs))
         # print("f2", attractor_f(**kwargs))
@@ -364,41 +382,109 @@ class TorchPlanner(object):
         # print("alpha2", attractor_alpha(**kwargs))
         # print("M2")
         # print("forced xddot", self._forced_geometry._xddot(**kwargs))
-        q= self._variables._state_variable_names[0]
-        qdot= self._variables._state_variable_names[1]
-        l_subst = pulled_geom._l_subst
-        dL_dxdot = l_subst.grad(qdot)
-        dL_dx = l_subst.grad(q)
-        d2L_dxdxdot = dL_dx.grad(qdot)
-        d2L_dxdot2 = dL_dxdot.grad(qdot)
-
-        F = d2L_dxdxdot
+        # q= self._variables._state_variable_names[0]
+        # qdot= self._variables._state_variable_names[1]
+        # x = attractor._map._phi(**kwargs)
+        # xdot = attractor._map._J(**kwargs) @ kwargs[qdot]
+        # metric = self._config.attractor_metric
+        # def lag(q,qdot):
+        #     x = attractor._map._phi(**kwargs)
+        #     xdot = attractor._map._J(**kwargs) @ kwargs[qdot]
+        #     return torch.sum(xdot *( metric(x,xdot) @ xdot),dim=-1)
+        # l = TorchFunctionWrapper(expression=lag, variables=self._geometry._vars, ex_input=[q,qdot])
+        # print("metric", metric(x,xdot))
+        # print("lag psi2", torch.sum(xdot* (metric(x,xdot).type(torch.float64)@xdot), dim=-1))
+        # M = l.hessian(qdot,qdot)
+        # F = l.hessian(q, qdot)
+        # f_e = -l.grad(q)
+        # dL_dxdot = l.grad(qdot)
+        # dL_dx = l.grad(q)
+        # d2L_dxdxdot = dL_dx.grad(qdot, end_grad=True)
+        # # d2L_dxdot2 = dL_dxdot.grad(qdot, end_grad=True)
+        # M(**kwargs)
         # F(**kwargs)
-        f_e = -dL_dx
-        M = d2L_dxdot2
-        f = F.transpose() @ kwargs[qdot] + f_e
+        # f_e = -dL_dx
+        # M = d2L_dxdot2
+        # f = F.transpose() @ kwargs[qdot] + f_e
+        # f_value = f(**kwargs)
+        # frac = pulled_geom.frac(**kwargs)
+        # alpha = -frac * kwargs[qdot]*(pulled_geom._f(**kwargs) - f_value)
+        # attractor = self.leaves['goal_0_leaf']
+        # psi = attractor.psi
+        
+        # h = psi.grad(attractor._xdot)
+        # print("psi", attractor.psi.lowerLeaf(attractor.map())(**kwargs))
+        # print("psi input", psi._ex_input)
+        # print("xdot", attractor._xdot)
+        # print("h", h.lowerLeaf(attractor.map())(**kwargs))
+        # not_pulled_geom = TorchWeightedGeometry(g=attractor.geometry(), le=attractor.lagrangian())
+        # pulled_geom = not_pulled_geom.pull(attractor.map())
+        # print("M2", pulled_geom._M(**kwargs))
+        # print("f2", pulled_geom._f(**kwargs))
+        # print("h2", pulled_geom._h(**kwargs))
+        # print("xddot2", pulled_geom._xddot(**kwargs))
+        # print("frac2", pulled_geom.frac(**kwargs))
+        # print("l2", pulled_geom._le._l(**kwargs))
+        # dL_dxdot.set_name("dL_dxdot")
+        # dL_dx = l.grad("q")
+        # dL_dx.set_name("dL_dx")
+        # d2L_dxdxdot = dL_dx.grad("qdot")
+        # d2L_dxdot2 = dL_dxdot.grad("qdot")
+        # F = d2L_dxdxdot
+        # F.set_name("F:d2L_dxdxdot")
+        # f_e = -dL_dx
+        # M = d2L_dxdot2
+        # M.set_name("M:d2L_dxdot2")
+        # f = F.transpose() @ kwargs["qdot"] + f_e
+        # f.set_name("lagrange f")
 
-        print("M2", pulled_geom._M(**kwargs))
-        print("f2", pulled_geom._f(**kwargs))
-        print("xddot2", pulled_geom._xddot(**kwargs))
-        print("frac2", pulled_geom.frac(**kwargs))
-        print("l_subst2", pulled_geom._l_subst(**kwargs))
-        print("alpha2", pulled_geom._alpha(**kwargs))
-        print("le_M2", pulled_geom._le._S._M(**kwargs))
-        print("le_f2", f(**kwargs))
+        # print("le_M2", pulled_geom._le._S._M(**kwargs))
+        # print("le_f2", pulled_geom._le._S._f(**kwargs))
+        # print("alpha2", pulled_geom._alpha(**kwargs))
 
-        # print("baseM2", pulled_geom._M(**kwargs))
-        # print("basef2", pulled_geom._f(**kwargs))
-        # print("basexddot2", pulled_geom._xddot(**kwargs))
-        # print("basefrac2", pulled_geom.frac(**kwargs))
-        # print("basel_subst2", pulled_geom._l_subst(**kwargs))
-        # print("basealpha2", pulled_geom._alpha(**kwargs))
-        # print("basele_M", pulled_geom._le._S._M(**kwargs))
-        # print("basele_f", f(**kwargs))
 
-        # print("forced_xddot2", forced_xddot)
+        # print("M2", not_pulled_geom._M.lowerLeaf(attractor.map())(**kwargs))
+        # print("f2", not_pulled_geom._f.lowerLeaf(attractor.map())(**kwargs))
+        # print("h2", not_pulled_geom._h.lowerLeaf(attractor.map())(**kwargs))
+        # print("xddot2", not_pulled_geom._xddot.lowerLeaf(attractor.map())(**kwargs))
+        # print("frac2", not_pulled_geom.frac.lowerLeaf(attractor.map())(**kwargs))
+        # print("l2", not_pulled_geom._le._l.lowerLeaf(attractor.map())(**kwargs))
+        # print("le_M2", not_pulled_geom._le._S._M.lowerLeaf(attractor.map())(**kwargs))
+        # print("le_f2", not_pulled_geom._le._S._f.lowerLeaf(attractor.map())(**kwargs))
+        # print("alpha2", not_pulled_geom._alpha.lowerLeaf(attractor.map())(**kwargs))
+        # print("baseM2", self._geometry._M(**kwargs))
+        # print("basef2", self._geometry._f(**kwargs))
+        # print("basexddot2", self._geometry._xddot(**kwargs))
+        # print("basefrac2", self._geometry.frac(**kwargs))
+        # print("basealpha2", self._geometry._alpha(**kwargs))
+        # print("basele_M", self._geometry._le._S._M(**kwargs))
+        # print("basele_f", self._geometry._le._S._f(**kwargs))
+        # print("force M2", self._forced_geometry._M(**kwargs))
+        # print("force f2", self._forced_geometry._f(**kwargs))
+        # print("force xddot2", self._forced_geometry._xddot(**kwargs))
+        # print("force frac2", self._forced_geometry.frac(**kwargs))
+        # print("force le_l", self._forced_geometry._le._l(**kwargs))
+        # print("force le_M", self._forced_geometry._le._S._M(**kwargs))
+        # print("force le_f", self._forced_geometry._le._S._f(**kwargs))
+        # print("exe M2", self._execution_geometry._M(**kwargs))
+        # print("exe f2", self._execution_geometry._f(**kwargs))
+        # print("exe xddot2", self._execution_geometry._xddot(**kwargs))
+        # print("exe frac2", self._execution_geometry.frac(**kwargs))
+        # print("exe alpha2", self._execution_geometry._alpha(**kwargs))
+        # print("exe le_M", self._execution_geometry._le._S._M(**kwargs))
+        # print("exe le_f", self._execution_geometry._le._S._f(**kwargs))
+        # limit = self.leaves[f"limit_{0}_leaf"]
+        # limit_geom = TorchWeightedGeometry(g= limit._geo, le = limit._lag, isLimit=True).pull(limit.map())
+        # print("liit M2", limit_geom._M(**kwargs))
+        # print("limit f2", limit_geom._f(**kwargs))
+        # print("limit xddot2", limit_geom._xddot(**kwargs))
+        # print("limit frac2", limit_geom.frac(**kwargs))
+        # print("limit alpha2", limit_geom._alpha(**kwargs))
+        # print("limit le_l2", limit_geom._le._l(**kwargs))
+        # print("limit le_M2", limit_geom._le._S._M(**kwargs))
+        # print("limit le_f2", limit_geom._le._S._f(**kwargs))
         # print("a_ex", self.a_ex(**kwargs))
-        # print("beat", self.beta_subst(**kwargs))
+        # print("alpha", self._geometry._alpha(**kwargs))
         # print("forced_minv", self._forced_geometry._Minv(**kwargs))
         # forced_xddot(**kwargs)
         
@@ -433,6 +519,8 @@ class TorchPlanner(object):
         # print("J2",J)
         # print("Jdot2", Jdot)
         # force_alpha = self._forced_geometry._alpha(**kwargs)
+        # print("leves",self.get_leaves())
+        
         action = self._xddot(**kwargs)
         action_magnitude = torch.linalg.norm(action, dim=-1)
 
@@ -569,6 +657,20 @@ class ParameterizedFabricPlanner(object):
         self._geometry.concretize()
         self._forced_geometry.concretize(ref_sign=self._ref_sign)
 
+    def add_limit_geometry(
+            self,
+            joint_index: int,
+            limits: list,
+            ) -> None:
+        lower_limit_geometry = LimitLeaf(self._variables, joint_index, limits[0], 0)
+        lower_limit_geometry.set_geometry(self.config.limit_geometry)
+        lower_limit_geometry.set_finsler_structure(self.config.limit_finsler)
+        upper_limit_geometry = LimitLeaf(self._variables, joint_index, limits[1], 1)
+        upper_limit_geometry.set_geometry(self.config.limit_geometry)
+        upper_limit_geometry.set_finsler_structure(self.config.limit_finsler)
+        self.add_leaf(lower_limit_geometry)
+        self.add_leaf(upper_limit_geometry)
+
     def set_execution_energy(self, execution_lagrangian: Lagrangian):
         assert isinstance(execution_lagrangian, Lagrangian)
         composed_geometry = Geometry(s=self._geometry)
@@ -620,6 +722,9 @@ class ParameterizedFabricPlanner(object):
         dynamic_obstacle_dimension: int = 3,
     ):
         # print("----------------variables init", self._variables)
+        if limits:
+            for joint_index in range(len(limits)):
+                self.add_limit_geometry(joint_index, limits[joint_index])
         if goal:
             
             self.set_goal_component(goal)
@@ -714,12 +819,12 @@ class ParameterizedFabricPlanner(object):
             #xddot = self._forced_geometry._xddot
         if mode == 'acc':
             self._funs = CasadiFunctionWrapper(
-                "funs", self.variables, {"action": xddot, "a_ex": a_ex, "beta": beta_subst,"exe_alpha": self._execution_geometry._alpha, \
+                "funs", self.variables, {"action": xddot, "eta": eta,"a_ex": a_ex, "beta": beta_subst,"exe_alpha": self._execution_geometry._alpha, \
                                          "forced_xddot": self._forced_geometry._xddot,"force_alpha": self._forced_speed_controlled_geometry._alpha}
             )
-            # self._funs = CasadiFunctionWrapper(
-            #     "funs", self.variables, {"action": xddot}
-            # )
+            self._funs = CasadiFunctionWrapper(
+                "funs", self.variables, {"action": xddot}
+            )
             
 
     def serialize(self, file_name: str):
@@ -759,85 +864,168 @@ class ParameterizedFabricPlanner(object):
         The variables passed are the joint states, and the goal position.
         The action is nullified if its magnitude is very large or very small.
         """
-        self._forced_geometry.concretize()
-        # self._execution_geometry.concretize()
-        self._pulled_attractor.concretize()
-        M_subst = self._pulled_attractor._M_subst
-        f_subst = self._pulled_attractor._f_subst
-        l_subst = self._pulled_attractor._l_subst
-        subst = CasadiFunctionWrapper(
-                "subst", self.variables, {"M_subst": M_subst, "f_subst": f_subst, "l_subst" : l_subst}
-            )
-        s= subst.evaluate(**kwargs)  
+        # panda_limits = [
+        #     [-2.8973, 2.8973],
+        #     [-1.7628, 1.7628],
+        #     [-2.8973, 2.8973],
+        #     [-3.0718, -0.0698],
+        #     [-2.8973, 2.8973],
+        #     [-0.0175, 3.7525],
+        #     [-2.8973, 2.8973]
+        # ]
+        # panda_limits = torch.tensor(panda_limits, dtype=torch.float64)
+        # panda_limits = np.array(panda_limits, dtype=np.float64)
+        # lower = kwargs["q"]-panda_limits[:,0]
+        # upper = panda_limits[:,1]- kwargs["q"]
+        # limit_ex = self._config.limit_geometry
+        
+        # attractor = self.leaves['goal_0_leaf']
+        # attractor._map.concretize()
+        # x, xdot, J, Jdot = attractor._map.forward(**kwargs)
+        
+        # M_subst = self._pulled_attractor._M_subst
+        # f_subst = self._pulled_attractor._f_subst
+        # l_subst = self._pulled_attractor._l_subst
+        # subst = CasadiFunctionWrapper(
+        #         "subst", self.variables, {"M_subst": M_subst, "f_subst": f_subst, "l_subst" : l_subst}
+        #     )
+        # s= subst.evaluate(**kwargs)  
         # M = s['M_subst']
         # f = s['f_subst']
-        l = s["l_subst"]
-        # M, Minv, f, forced_xddot, alpha, frac, lag_M, lag_f= self._forced_geometry.evaluate(**kwargs)
-        M, Minv, f, xddot, alpha, frac, lag_M, lag_f= self._pulled_attractor.evaluate(**kwargs)
-        # exe_M, exe_Minv, exe_f, _, exe_alpha, exe_frac, exe_lag_f= self._execution_geometry.evaluate(**kwargs)
-        # force_M, force_Minv, force_f, force_xddot, force_alpha, force_frac, force_lag_M, force_lag_f= self._forced_geometry.evaluate(**kwargs)
-        # print("M1", force_M)
-        # print("f1", force_f)
-        # print("xddot1", force_xddot)
+
+        # l = s["l_subst"]
+        # # M, Minv, f, forced_xddot, alpha, frac, lag_M, lag_f= self._forced_geometry.evaluate(**kwargs)
+
+        # self._forced_geometry.concretize()
+        # self._execution_geometry.concretize()
+        # self._pulled_attractor.concretize()
+        # # print("leaves", self.leaves)
+        # for i in range(self._dof):
+        #     limit = self.leaves[f"limit_joint_{i}_{0}_leaf"]
+
+        #     if i==0:
+        #         limit_geom = WeightedGeometry(g=limit._geo, le=limit._lag).pull(limit.map())
+        #     else:
+        #         limit_geom += WeightedGeometry(g=limit._geo, le=limit._lag).pull(limit.map())
+        # limit_geom.concretize()
+
+        # base_M, base_Minv, base_f, base_xddot, base_alpha, base_frac, base_lag_l, base_lag_M, base_lag_f= self._geometry.evaluate(**kwargs)
+        # limit_M, limit_Minv, limit_f, limit_xddot, limit_alpha, limit_frac, limit_lag_l, limit_lag_M, limit_lag_f= limit_geom.evaluate(**kwargs)
+        # exe_M, exe_Minv, exe_f, exe_xddot, exe_alpha, exe_frac, exe_lag_l, exe_lag_M, exe_lag_f= self._execution_geometry.evaluate(**kwargs)
+        # force_M, force_Minv, force_f, force_xddot, force_alpha, force_frac, force_lag_l, force_lag_M, force_lag_f= self._forced_geometry.evaluate(**kwargs)
+        # attractor_M, attractor_Minv, attractor_f, attractor_xddot, attractor_alpha, attractor_frac, attractor_lag_l, attractor_lag_M, attractor_lag_f= self._pulled_attractor.evaluate(**kwargs)
+
+        # print("base M1", base_M)
+        # print("base f1", base_f)
+        # print("base xddot1", base_xddot)
+        # print("base alpha1", base_alpha)
+        # print("base frac1", base_frac)
+        # print("base lag_M1", base_lag_M)
+        # print("base lag_f1", base_lag_f)
+
+        # print("limit M1", limit_M)
+        # print("limit f1", limit_f)
+        # print("limit xddot1", limit_xddot)
+        # print("limit alpha1", limit_alpha)
+        # print("limit frac1", limit_frac)
+        # print("limit lag_l1", limit_lag_l)
+        # print("limit lag_M1", limit_lag_M)
+        # print("limit lag_f1", limit_lag_f)
+
+        # print("exe M1", exe_M)
+        # print("exe f1", exe_f)
+        # print("exe xddot1", exe_xddot)
+        # print("exe alpha1", exe_alpha)
+        # print("exe frac1", exe_frac)
+        # print("exe lag_l1", exe_lag_l)
+        # print("exe lag_M1", exe_lag_M)
+        # print("exe lag_f1", exe_lag_f)
+
+        # print("attractor M1", attractor_M)
+        # print("attractor f1", attractor_f)
+        # print("attractor xddot1", attractor_xddot)
+        # print("attractor alpha1", attractor_alpha)
+        # print("attractor frac1", attractor_frac)
+        # print("attractor lag_l1", attractor_lag_l)
+        # print("attractor lag_M1", attractor_lag_M)
+        # print("attractor lag_f1", attractor_lag_f)
+
+
+        # print("force M1", force_M)
+        # print("force f1", force_f)
+        # print("force xddot1", force_xddot)
+        # print("force alpha1", force_alpha)
+        # print("force frac1", force_frac)
+        # print("force lag_l1", force_lag_l)
+        # print("force lag_M1", force_lag_M)
+        # print("force lag_f1", force_lag_f)
+
+        # print("pulled f1", base_f)
+        # print("pulled xddot1", xddot)
+        # print("force f1", force_f)
+        # # print("h1", force_h)
+        # print("force xddot1", force_xddot)
         # print("alpha1", force_alpha)
         # print("frac1", force_frac)
         # print("lag_M1", lag_M)
         # print("lag_f1", lag_f)
-        print("M1", M)
-        print("f1", f)
-        print("xddot1", xddot)
-        print("alpha1", alpha)
-        print("frac1", frac)
-        print("lag_M1", lag_M)
-        print("lag_f1", lag_f)
+        # print("M1", M)
+        # print("f1", f)
+        # print("xddot1", xddot)
+        # print("alpha1", alpha)
+        # print("frac1", frac)
+        # print("l_subst1", l)
+        # print("lag_M1", lag_M)
+        # print("lag_f1", lag_f)
         # print("l_subst1", l)
         # print("S", S)
         # print("Mcond", Mcond)
         # print("M_subst1", M)
         # print("f_subst1", f)
-        attractor = self.leaves['goal_0_leaf']
-        attractor._map.concretize()
-        x, xdot, J, Jdot = attractor._map.forward(**kwargs)
-        Jt = np.transpose(J)
-        not_pull_attractor = WeightedGeometry(g=attractor._geo, le= attractor._lag)
-        not_pull_attractor.computeAlpha()
-        attractor_M = ca.substitute(not_pull_attractor.M(), attractor._geo.x(), attractor._map._phi)
-        attractor_M = ca.substitute(attractor_M, attractor._geo.xdot(), attractor._map._phidot)
-        attractor_alpha = ca.substitute(not_pull_attractor._alpha, attractor._geo.x(), attractor._map._phi)
-        attractor_alpha = ca.substitute(attractor_alpha, attractor._geo.xdot(), attractor._map._phidot)
+        
+        # # Jt = np.transpose(J)
+        # not_pull_attractor = WeightedGeometry(g=attractor._geo, le= attractor._lag)
+        # not_pull_attractor.computeAlpha()
+        # attractor_M = ca.substitute(not_pull_attractor.M(), attractor._geo.x(), attractor._map._phi)
+        # attractor_M = ca.substitute(attractor_M, attractor._geo.xdot(), attractor._map._phidot)
+        # attractor_alpha = ca.substitute(not_pull_attractor._alpha, attractor._geo.x(), attractor._map._phi)
+        # attractor_alpha = ca.substitute(attractor_alpha, attractor._geo.xdot(), attractor._map._phidot)
 
-        attractor_f = ca.substitute(not_pull_attractor.f(), attractor._geo.x(), attractor._map._phi)
-        attractor_f = ca.substitute(attractor_f, attractor._geo.xdot(), attractor._map._phidot)
-        attractor_frac = ca.substitute(not_pull_attractor.frac, attractor._geo.x(), attractor._map._phi)
-        attractor_frac = ca.substitute(attractor_frac, attractor._geo.xdot(), attractor._map._phidot)
-        attractor_xddot = ca.substitute(not_pull_attractor._xddot, attractor._geo.x(), attractor._map._phi)
-        attractor_xddot = ca.substitute(attractor_xddot, attractor._geo.xdot(), attractor._map._phidot)
-        attractor_le_M = ca.substitute(not_pull_attractor._le._S._M, attractor._geo.x(), attractor._map._phi)
-        attractor_le_M = ca.substitute(attractor_le_M, attractor._geo.xdot(), attractor._map._phidot)
-        attractor_le_f = ca.substitute(not_pull_attractor._le._S.f(), attractor._geo.x(), attractor._map._phi)
-        attractor_le_f = ca.substitute(attractor_le_f, attractor._geo.xdot(), attractor._map._phidot)
+        # attractor_f = ca.substitute(not_pull_attractor.f(), attractor._geo.x(), attractor._map._phi)
+        # attractor_f = ca.substitute(attractor_f, attractor._geo.xdot(), attractor._map._phidot)
+        # attractor_h = ca.substitute(not_pull_attractor.h(), attractor._geo.x(), attractor._map._phi)
+        # attractor_h = ca.substitute(attractor_h, attractor._geo.xdot(), attractor._map._phidot)
+        # attractor_frac = ca.substitute(not_pull_attractor.frac, attractor._geo.x(), attractor._map._phi)
+        # attractor_frac = ca.substitute(attractor_frac, attractor._geo.xdot(), attractor._map._phidot)
+        # attractor_xddot = ca.substitute(not_pull_attractor._xddot, attractor._geo.x(), attractor._map._phi)
+        # attractor_xddot = ca.substitute(attractor_xddot, attractor._geo.xdot(), attractor._map._phidot)
+        # attractor_le_M = ca.substitute(not_pull_attractor._le._S._M, attractor._geo.x(), attractor._map._phi)
+        # attractor_le_M = ca.substitute(attractor_le_M, attractor._geo.xdot(), attractor._map._phidot)
+        # attractor_le_f = ca.substitute(not_pull_attractor._le._S.f(), attractor._geo.x(), attractor._map._phi)
+        # attractor_le_f = ca.substitute(attractor_le_f, attractor._geo.xdot(), attractor._map._phidot)
 
-        func = CasadiFunctionWrapper(
-                "asdf", self.variables, {"attractor_M": attractor_M, "attractor_f": attractor_f, "attractor_frac" : attractor_frac,
-                                        "attractor_alpha": attractor_alpha,
-                                         "attractor_xddot": attractor_xddot, "attractor_le_M": attractor_le_M, "attractor_le_f": attractor_le_f}
-            )
-        evaluations = func.evaluate(**kwargs)
-        attractor_M = evaluations["attractor_M"]
-        attractor_f = evaluations["attractor_f"]
-        attractor_alpha= evaluations["attractor_alpha"]
-        attractor_frac = evaluations["attractor_frac"]
-        attractor_xddot = evaluations["attractor_xddot"]
-        attractor_le_M= evaluations["attractor_le_M"]
-        attractor_le_f = evaluations["attractor_le_f"]
+        # func = CasadiFunctionWrapper(
+        #         "asdf", self.variables, {"attractor_M": attractor_M, "attractor_f": attractor_f, "attractor_frac" : attractor_frac,
+        #                                 "attractor_alpha": attractor_alpha, "attractor_h" : attractor_h,
+        #                                  "attractor_xddot": attractor_xddot, "attractor_le_M": attractor_le_M, "attractor_le_f": attractor_le_f}
+        #     )
+        # evaluations = func.evaluate(**kwargs)
+        # attractor_M = evaluations["attractor_M"]
+        # attractor_f = evaluations["attractor_f"]
+        # attractor_h = evaluations["attractor_h"]
+        # attractor_alpha= evaluations["attractor_alpha"]
+        # attractor_frac = evaluations["attractor_frac"]
+        # attractor_xddot = evaluations["attractor_xddot"]
+        # attractor_le_M= evaluations["attractor_le_M"]
+        # attractor_le_f = evaluations["attractor_le_f"]
         # print("M1", evaluations["attractor_M"])
         # print("f1", evaluations["attractor_f"])
+        # print("h1", evaluations["attractor_h"])
         # print("alpha1", evaluations["attractor_alpha"])
         # print("frac1", evaluations["attractor_frac"])
         # print("xddot1", evaluations["attractor_xddot"])
         # print("le_M1", evaluations["attractor_le_M"])
         # print("le_f1", evaluations["attractor_le_f"])
-        # print("forced xddot", forced_xddot)
 
         # frac_subst = ca.substitute(not_pull_attractor.frac, attractor._geo.x(),attractor._map._phi)
         # frac_subst = ca.substitute(frac_subst, attractor._geo.xdot(),attractor._map._phidot)
@@ -878,17 +1066,23 @@ class ParameterizedFabricPlanner(object):
         evaluations = self._funs.evaluate(**kwargs) 
 
         action = evaluations["action"]
-        forced_xddot = evaluations["forced_xddot"]
+        # forced_xddot = evaluations["forced_xddot"]
         # print("forced_xddot1", forced_xddot)
         # Debugging
+        # eta = evaluations['eta']
         # a_ex = evaluations['a_ex']
         # beta = evaluations['beta']
-        # exe_alpha = evaluations['exe_alpha']
+        # # exe_alpha = evaluations['exe_alpha']
         # force_alpha = evaluations['force_alpha']
         # logging.debug(f"a_ex: {evaluations['a_ex']}")
         # logging.debug(f"alhpa_forced_geometry: {evaluations['alpha_forced_geometry']}")
         # logging.debug(f"alpha_geometry: {evaluations['alpha_geometry']}")
         # logging.debug(f"beta : {evaluations['beta']}")
+        # print("eta1", eta)
+        # print("a_ex1", a_ex)
+        # print("beta1", beta)
+        # print("alpha1", force_alpha)
+        # print("base alpha1", base_alpha)
         action_magnitude = np.linalg.norm(action)
         if action_magnitude < eps:
             # logging.warning(f"Fabrics: Avoiding small action with magnitude {action_magnitude}")

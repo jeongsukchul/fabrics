@@ -36,39 +36,52 @@ class TorchSpec:
             self._f = f 
             self._h = self._Minv @ self._f
             self._h.set_name("maded h in torch spec")
-        if 'M_subst' in kwargs:
-            self._M_subst = kwargs.get('M_subst')
-        if 'f_subst' in kwargs:
-            self._f_subst = kwargs.get('f_subst')
-        
+        # if 'M_subst' in kwargs:
+        #     self._M_subst = kwargs.get('M_subst')
+        # if 'f_subst' in kwargs:
+        #     self._f_subst = kwargs.get('f_subst')
+        # if 'l' in kwargs:
+        #     self._l = kwargs.get('l')
         self._x = self._vars._position
         self._xdot = self._vars._velocity
     def __add__(self, b):
         assert isinstance(b, TorchSpec)
         all_vars = self._vars + b._vars
-        if hasattr(self, '_h') and hasattr(b, '_h'):
-            return TorchSpec(self._M + b._M, h=self._h + b._h, var=all_vars)
-        else:
-            return TorchSpec(self._M + b._M, f=self._f + b._f, var=all_vars)
+        # if hasattr(self, '_h') and hasattr(b, '_h'):
+        #     return TorchSpec(self._M + b._M, h=self._h + b._h, var=all_vars)
+        # else:
+        return TorchSpec(self._M + b._M, f=self._f + b._f, var=all_vars)
 
-    def pull(self, dm:TorchDifferentialMap):
-        Jt = dm._J.transpose()
-        Jt.set_name("J tr")
-        M_subst = self._M.lowerLeaf(dm)
-        M_subst.set_name("M_subst")
-        f = self._f.lowerLeaf(dm)
-        f.set_name("f_subst")
-        M_pulled = Jt @ M_subst @ dm._J
-        M_pulled.set_name("M_pulled")
-        f1 = Jt @ M_subst @ dm._Jdotqdot
-        f1.set_name("f1")
-        f2 = Jt @ f
-        f2.set_name("f2")
-        f_pulled = f1+f2
-        f_pulled.set_name("f_pulled")
+    def pull(self, dm:TorchDifferentialMap, isLimit: bool = False):
+        if isLimit:
+            Jt = dm._J.transpose()
+            Jt.set_name("J tr")
+
+            f = self._f.lowerLeaf(dm)
+            M_pulled = self._M.lowerLeaf(dm)
+            M_pulled.set_name("M_pulled_limit")
+            
+            f_pulled = Jt @ f
+            f_pulled.set_name("f_pulled_limit")
+
+        else:
+            Jt = dm._J.transpose()
+            Jt.set_name("J tr")
+            M_subst = self._M.lowerLeaf(dm)
+            M_subst.set_name("M_subst")
+            f = self._f.lowerLeaf(dm)
+            f.set_name("f_subst")
+            M_pulled = Jt @ M_subst @ dm._J
+            M_pulled.set_name("M_pulled")
+            f1 = Jt @ M_subst @ dm._Jdotqdot
+            f1.set_name("f1")
+            f2 = Jt @ f
+            f2.set_name("f2")
+            f_pulled = f1+f2
+            f_pulled.set_name("f_pulled")
         new_vars = TorchVariables(position = dm._vars._position, velocity= dm._vars._velocity, parameter_variables=dm._vars._parameter_variables | self._vars._parameter_variables)
         
-        return TorchSpec(M_pulled, M_subst = M_subst, f_subst = f, f=f_pulled, var=new_vars)
+        return TorchSpec(M_pulled, f=f_pulled, var=new_vars)
 
     def x(self):
         func = lambda **kwargs : kwargs[self._x]

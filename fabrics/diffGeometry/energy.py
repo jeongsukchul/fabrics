@@ -37,7 +37,16 @@ class TorchLagrangian(object):
         self._x = self._vars.position_variable()
         self._xdot = self._vars.velocity_variable()
 
-        self.applyEulerLagrange()
+        if "isLimit" in kwargs:
+            self._isLimit = kwargs.get("isLimit")
+        else:
+            self._isLimit = False
+        if 'spec' in kwargs and 'hamiltonian' in kwargs:
+            self._H = kwargs.get('hamiltonian')
+            self._S = kwargs.get('spec')
+        else:
+            self.applyEulerLagrange()
+
 
     def x(self):
         func = lambda **kwargs : kwargs[self._x]
@@ -50,26 +59,67 @@ class TorchLagrangian(object):
     def applyEulerLagrange(self):
 
         # Compute gradients and Jacobians using functorch
-        dL_dxdot = self._l.grad(self._xdot)
-        dL_dx = self._l.grad(self._x)
-        d2L_dxdxdot = dL_dx.grad(self._xdot, end_grad=True)
-        d2L_dxdot2 = dL_dxdot.grad(self._xdot, end_grad=True)
+        if self._isLimit:
+            dL_dxdot = self._l.grad_elementwise(self._xdot)
+            dL_dxdot.set_name("dL_dxdot_limit")
+            dL_dx = self._l.grad_elementwise(self._x)
+            dL_dx.set_name("dL_dx_limit")
+            d2L_dxdxdot = dL_dx.grad_elementwise(self._xdot)
+            d2L_dxdot2 = dL_dxdot.grad_elementwise(self._xdot)
+            F = d2L_dxdxdot.diag()
+            F.set_name("F:d2L_dxdxdot_limit")
+            f_e = -dL_dx
+            f_e.set_name("f_e_limit")
+            M = d2L_dxdot2.diag()
+            M.set_name("M:d2L_dxdot2_limit")
+            f = F @ self.xdot() + f_e
+            f.set_name("lagrange f_limit")
+            self._dL_dxdot = dL_dxdot
+            self._H = dL_dxdot @ self.xdot() - self._l 
+            self._H.set_name("limit hamiltonian")
+            self._S = TorchSpec(M, f=f, var=self._vars)
+        else:
+            dL_dxdot = self._l.grad(self._xdot)
+            dL_dxdot.set_name("dL_dxdot")
+            dL_dx = self._l.grad(self._x)
+            dL_dx.set_name("dL_dx")
+            d2L_dxdxdot = dL_dx.grad(self._xdot)
+            d2L_dxdot2 = dL_dxdot.grad(self._xdot)
+            F = d2L_dxdxdot
+            F.set_name("F:d2L_dxdxdot")
+            f_e = -dL_dx
+            
+            M = d2L_dxdot2
+            M.set_name("M:d2L_dxdot2")
+            f = F.transpose() @ self.xdot() + f_e
+            f.set_name("lagrange f")
 
-        F = d2L_dxdxdot
-        F.set_name("F:d2L_dxdxdot")
-        f_e = -dL_dx
-        M = d2L_dxdot2
-        f = F.transpose() @ self.xdot() + f_e
-        f.set_name("lagrange f")
-        self._dL_dxdot = dL_dxdot
-        self._H = dL_dxdot @ self.xdot() - self._l 
-        self._S = TorchSpec(M, f=f, var=self._vars)
+            self._dL_dxdot = dL_dxdot
+            self._H = dL_dxdot @ self.xdot() - self._l 
+            self._H.set_name("hamiltonian")
+            self._S = TorchSpec(M, f=f, var=self._vars)
 
     
-    def pull(self, dm: TorchDifferentialMap):
+    def pull(self, dm: TorchDifferentialMap, isLimit:bool = False):
         assert isinstance(dm, TorchDifferentialMap)
-        l = self._l.lowerLeaf(dm)
-        new_vars = TorchVariables(position = dm._vars._position, velocity= dm._vars._velocity, parameter_variables=dm._vars._parameter_variables | self._vars._parameter_variables)
+        if isLimit:
+            l = self._l.lowerLeaf(dm).sum()
+            l.set_name("l_pulled_limit")
+            H = self._H.lowerLeaf(dm)
+            H.set_name("H_pulled_limit")
+            M = self._S._M.lowerLeaf(dm)
+            M.set_name("lag M_pulled_limit")
+            f = self._S._f.lowerLeaf(dm)
+            f.set_name("lag f_pulled_limit")
+            new_vars = TorchVariables(position = dm._vars._position, velocity= dm._vars._velocity, parameter_variables=dm._vars._parameter_variables | self._vars._parameter_variables)
+            S_pulled = TorchSpec(M, f=f, var=new_vars)
+            return TorchLagrangian(l, spec = S_pulled, hamiltonian=H, var=new_vars)
+        else:
+            l = self._l.lowerLeaf(dm)
+            l.set_name("l_pulled")
+            new_vars = TorchVariables(position = dm._vars._position, velocity= dm._vars._velocity, parameter_variables=dm._vars._parameter_variables | self._vars._parameter_variables)
+            return TorchLagrangian(l, var=new_vars)
+
         # new_state_variables = dm.state_variables()
         # new_parameters = {}
         # new_parameters.update(self._vars.parameters())
@@ -84,7 +134,6 @@ class TorchLagrangian(object):
         #     return TorchLagrangian(l, var=new_vars, J_ref=J_ref, ref_names=self.ref_names())
         # else:
             # return TorchLagrangian(l, var=new_vars, ref_names=self.ref_names())
-        return TorchLagrangian(l, var=new_vars)
 
     def __add__(self, b):
         assert isinstance(b, TorchLagrangian)

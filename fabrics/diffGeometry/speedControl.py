@@ -4,7 +4,7 @@ from fabrics.diffGeometry.diffMap import DifferentialMap, TorchDifferentialMap
 from fabrics.diffGeometry.energy import Lagrangian, TorchLagrangian
 from fabrics.helpers.functions import parse_symbolic_input
 from fabrics.helpers.casadiFunctionWrapper import TorchFunctionWrapper
-from fabrics.planner.configuration_classes import damperBeta, damperEta
+from fabrics.planner.configuration_classes import DamperBetaExpression, DamperEtaExpression
 from fabrics.helpers.variables import Variables, TorchVariables
 
 
@@ -12,7 +12,7 @@ import torch
 
 class TorchDamper:
     def __init__(
-        self, beta_expression: damperBeta, eta_expression: damperEta, x: str , dm: TorchDifferentialMap, lagrangian_execution: TorchLagrangian
+        self, beta_expression: DamperBetaExpression, eta_expression: DamperEtaExpression, x: str , dm: TorchDifferentialMap, lagrangian_execution: TorchLagrangian
     ):
         self._x = x
         self._dm = dm

@@ -7,15 +7,15 @@ from fabrics.diffGeometry.energy import Lagrangian, TorchLagrangian
 from fabrics.components.leaves.leaf import Leaf, TorchLeaf
 from fabrics.helpers.variables import Variables, TorchVariables
 from fabrics.helpers.functions import parse_symbolic_input
-from fabrics.planner.configuration_classes import attractorMetric
-from fabrics.planner.configuration_classes import attractorPotential
+from fabrics.planner.configuration_classes import AttractorMetricExpression
+from fabrics.planner.configuration_classes import AttractorPotentialExpression
 from fabrics.helpers.casadiFunctionWrapper import TorchFunctionWrapper
 
 import torch, functorch
 
 class TorchGenericAttractor(TorchLeaf):
     def __init__(
-        self, root_variables: Variables, fk_goal: ca.SX, attractor_name: str
+        self, root_variables: Variables, fk_goal: ca.SX, attractor_name: str, 
     ):
         goal_dimension = fk_goal.size()[0]
         super().__init__(
@@ -51,7 +51,7 @@ class TorchGenericAttractor(TorchLeaf):
         self._map = TorchParameterizedGoalMap(
             self._parent_variables, self._forward_kinematics, reference_variable
         )
-    def set_potential(self, potential: attractorPotential) -> None:
+    def set_potential(self, potential: AttractorPotentialExpression) -> None:
         psi_ex = lambda x, xdot, weight_goal: (weight_goal * potential(x,xdot)).squeeze()
         psi = TorchFunctionWrapper(expression= psi_ex, variables=self._leaf_variables,ex_input=(self._leaf_variables.position_velocity_variables()+[self._weight_name]), name="psi_set_potential")
         self.psi=psi
@@ -60,7 +60,7 @@ class TorchGenericAttractor(TorchLeaf):
         h_psi.set_name("h_psi")
         self._geo = TorchGeometry(h=h_psi, var=self._leaf_variables)
 
-    def set_metric(self, attractor_metric: attractorMetric) -> None:
+    def set_metric(self, attractor_metric: AttractorMetricExpression) -> None:
         attractor_M = TorchFunctionWrapper(expression=attractor_metric, variables=self._leaf_variables,\
                                             ex_input=self._leaf_variables.position_velocity_variables(),name="attractor_metric")
         self._M = attractor_M

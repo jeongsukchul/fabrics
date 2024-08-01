@@ -34,6 +34,10 @@ class TorchWeightedGeometry(TorchSpec):
     def __init__(self, **kwargs):
         le = kwargs.get("le")
         self._le = le
+        if "isLimit" in kwargs:
+            self._isLimit = kwargs.get("isLimit")
+        else:
+            self._isLimit = False
         if "g" in kwargs:
             g = kwargs.get("g")
             var = g._vars + le._vars
@@ -41,25 +45,29 @@ class TorchWeightedGeometry(TorchSpec):
                 raise Exception("geometry and lagrangian with different space")
             self._le = le
             self._h = g._h
+            self._h.set_name("h in weighted geom")
             self._M = le._S._M
             self._vars = var
+
             self._f = self._M @ self._h
+            self._f.set_name("generated f in weighted geom")
         if "s" in kwargs:
             s = kwargs.get("s")
             if le._x != s._x:
                 raise Exception("spec and lagrangian with different space")
             self._le = le
-            if hasattr(s, '_f_subst') and hasattr(s, '_M_subst'):
-                super().__init__(s._M, f=s._f, var=s._vars, M_subst=s._M_subst, f_subst=s._f_subst)
-            else:
-                super().__init__(s._M, f=s._f, var=s._vars)
-        if "l_subst" in kwargs:
-            self._l_subst = kwargs.get("l_subst")
+            # if hasattr(s, '_f_subst') and hasattr(s, '_M_subst'):
+            #     super().__init__(s._M, f=s._f, var=s._vars, M_subst=s._M_subst, f_subst=s._f_subst)
+            # else:
+            super().__init__(s._M, f=s._f, var=s._vars)
+        # if "l_subst" in kwargs:
+        #     self._l_subst = kwargs.get("l_subst")
+        
         self._x = self._vars._position
         self._xdot = self._vars._velocity
         # frac = 1/(eps+ self.xdot().dot(self._le._S._M @ self.xdot()))
         frac = 1/(eps+ self.xdot().dot(self._M @ self.xdot()))
-        
+
         self.frac = frac
         self._alpha = -frac * self.xdot().dot(self._f - self._le._S._f)
         self._alpha.set_name("alpha")
@@ -72,10 +80,10 @@ class TorchWeightedGeometry(TorchSpec):
         return TorchWeightedGeometry(s=spec, le=le) 
     
     def pull(self, dm: TorchDifferentialMap): 
-        spec = super().pull(dm)
-        le_pulled = self._le.pull(dm)
-        l_subst = self._le._l.lowerLeaf(dm)
-        return TorchWeightedGeometry(s=spec, le=le_pulled, l_subst = l_subst) 
+        spec = super().pull(dm, isLimit = self._isLimit)
+        le_pulled = self._le.pull(dm, isLimit = self._isLimit)
+        # l_subst = self._le._l.lowerLeaf(dm)
+        return TorchWeightedGeometry(s=spec, le=le_pulled, isLimit = self._isLimit)
     # def evaluate(self, x: torch.Tensor ,xdot: torch.Tensor):
     #     return [self._M(x,xdot), self._f(x,xdot), self._xddot(x,xdot), self._alpha(x,xdot)]
 class WeightedGeometry(Spec):
@@ -140,7 +148,8 @@ class WeightedGeometry(Spec):
         """
         
         self._funs = CasadiFunctionWrapper(
-                "funs", var, {"M": self.M(), 'Minv': self.Minv(), 'f': self.f(), 'xddot': self._xddot, 'alpha': self._alpha, 'frac': self.frac,'lag_M':self._le._S._M, 'lag_f': self._le._S.f()}
+                "funs", var, {"M": self.M(), 'Minv': self.Minv(), 'f': self.f(), 'xddot': self._xddot, 'alpha': self._alpha, 'frac': self.frac,\
+                              'lag_l': self._le._l, 'lag_M':self._le._S._M, 'lag_f': self._le._S.f()}
         )
         
     def evaluate(self, **kwargs):
@@ -154,8 +163,9 @@ class WeightedGeometry(Spec):
         alpha = evaluations['alpha']
         frac = evaluations['frac']
         lag_f = evaluations['lag_f']
+        lag_l = evaluations['lag_l']
         lag_M = evaluations['lag_M']
-        return [M, Minv, f, xddot, alpha, frac, lag_M, lag_f]
+        return [M, Minv, f, xddot, alpha, frac, lag_l, lag_M, lag_f]
 
     def pull(self, dm: DifferentialMap):
         spec = super().pull(dm)

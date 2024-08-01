@@ -4,9 +4,9 @@ import numpy as np
 import casadi as ca
 
 from fabrics.diffGeometry.energy import Lagrangian
-from fabrics.diffGeometry.geometry import Geometry
+from fabrics.diffGeometry.geometry import Geometry, TorchGeometry
 from fabrics.helpers.variables import Variables, TorchVariables
-from fabrics.diffGeometry.diffMap import DifferentialMap
+from fabrics.diffGeometry.diffMap import DifferentialMap, TorchDifferentialMap
 from fabrics.helpers.casadiFunctionWrapper import CasadiFunctionWrapper, TorchFunctionWrapper
 
 
@@ -18,11 +18,12 @@ class TorchLeaf(object):
 
     def __init__(
         self,
-        parent_variables: Variables,
+        parent_variables,
         leaf_name: str,
-        forward_kinematics: Union[ca.SX, None],
+        forward_kinematics,
         dim: int = 1,
     ):
+        self._dim = dim
         self._parent_variables = parent_variables
         self._x = f"x_{leaf_name}"
         self._xdot =f"xdot_{leaf_name}"
@@ -34,17 +35,17 @@ class TorchLeaf(object):
         self._p = {}
         self._leaf_name = leaf_name
         if not forward_kinematics is None:
-            self._map = DifferentialMap(forward_kinematics, parent_variables)
+            self._map = TorchDifferentialMap(forward_kinematics, parent_variables)
 
     def set_params(self, **kwargs):
         for key in self._p:
             if key in kwargs:
                 self._p[key] = kwargs.get(key)
 
-    def geometry(self) -> Geometry:
+    def geometry(self) -> TorchGeometry:
         return self._geo
 
-    def map(self) -> DifferentialMap:
+    def map(self) -> TorchDifferentialMap:
         try:
             return self._map
         except AttributeError:

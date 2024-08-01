@@ -55,14 +55,19 @@ class TorchFunctionWrapper(object):
             # print("result2", result2)
 
             if operator_type == 'add':
+                # print("operate result", result1 + result2)
                 return result1 + result2
             if operator_type == 'sub':
+                # print("operate result", result1 - result2)
                 return result1 - result2
             if operator_type == 'matmul':
+                # print("operate result", result1 @ result2)
                 return result1 @ result2
             if operator_type == 'mul':
+                # print("operate result", result1 * result2)
                 return result1 * result2
             if operator_type == 'div':
+                # print("operate result", result1 / result2)
                 if result2.item() == 0:
                     raise Exception("divide by zero")
                 return result1 / result2
@@ -81,7 +86,7 @@ class TorchFunctionWrapper(object):
             return TorchFunctionWrapper(function=func, variables=self._variables)
     def __rmul__(self,other):
         func = lambda **kwargs : other*self(**kwargs)
-        return self.TorchFunctionWrapper(function=func, variables=self._variables)
+        return TorchFunctionWrapper(function=func, variables=self._variables)
     def __truediv__(self, other):
         if isinstance(other, TorchFunctionWrapper):
             return self.TorchFunctionOperator(other, 'div')
@@ -131,12 +136,22 @@ class TorchFunctionWrapper(object):
             return TorchFunctionWrapper(function=func, variables=self._variables) 
         else:
             raise TypeError   
-
-
+    def sum(self):
+        def sum_fn(**kwargs):
+            return torch.sum(self(**kwargs),dim=-1)
+        return TorchFunctionWrapper(function=sum_fn, variables=self._variables)
+    def diag(self):
+        def diag_fn(**kwargs):
+            M = self(**kwargs)
+            M_diag = torch.diag(M)
+            return M_diag
+            # func = lambda **kwargs: torch.linalg.pinv(self._func(**kwargs)+ torch.eye(s.size()[0]) * eps))
+        return TorchFunctionWrapper(function=diag_fn, variables=self._variables)
     def pinv(self):
         def inv(**kwargs):
             M = self(**kwargs)
             M_reg = M+ eps*torch.eye(M.size(0))
+
 
             # U, S, V = torch.svd(M_reg)
             # # print("S", S)
@@ -167,7 +182,7 @@ class TorchFunctionWrapper(object):
         def lowerLeafFunc(**lower_leaf_kwargs):
             # print("lower_leaf kwargs", lower_leaf_kwargs)
             
-            upper_leaf_kwargs = lower_leaf_kwargs
+            upper_leaf_kwargs = copy(lower_leaf_kwargs)
             upper_leaf_kwargs[x] = dm._phi(**lower_leaf_kwargs)
             upper_leaf_kwargs[xdot] = dm._J(**lower_leaf_kwargs) @ lower_leaf_kwargs[qdot]
             del upper_leaf_kwargs[q]
@@ -190,16 +205,66 @@ class TorchFunctionWrapper(object):
 
         index = self._inputs.index(variable)
         def wrapper_fn(*args):
+            # print("grad called by", self._name)
+            # print("grad variable", variable)
             kwargs = {self._inputs[i]: args[i] for i in range(len(args))}
+            # result = self(**kwargs)
+            # print("grad function output", result)
+
             return self._func(**kwargs)
         grad_fn = torch.func.jacrev(wrapper_fn, argnums=index)
         def grad_func(**kwargs):
             args = [kwargs[input] for input in self._inputs]
+            result = grad_fn(*args)
             if end_grad:
-                return grad_fn(*args).detach().type(torch.float64)
+                return result.detach().type(torch.float64)
             else:
-                return grad_fn(*args).type(torch.float64)
+                return result.type(torch.float64)
         return TorchFunctionWrapper(function=grad_func, variables=self._variables)
+    
+    def grad_elementwise(self, variable, end_grad=False):
+
+        if variable not in self._inputs:
+            raise Exception("Gradient variable is not in the function!")
+
+        index = self._inputs.index(variable)
+    
+        def wrapper_fn(*args):
+            # print("grad element called by", self._name)
+            kwargs = {self._inputs[i]: args[i] for i in range(len(args))}
+            # print("grad element function output", self(**kwargs))
+
+            return self._func(**kwargs)
+
+        grad_fn = torch.func.jacrev(wrapper_fn, argnums=index)
+
+        def grad_func_elementwise(**kwargs):
+            args = [kwargs[input] for input in self._inputs]
+            if end_grad:
+                # print("grad result",torch.diag(grad_fn(*args),0).detach().type(torch.float64))
+                return torch.diag(grad_fn(*args),0).detach().type(torch.float64)
+            else:
+                # print("grad result", torch.diag(grad_fn(*args),0).type(torch.float64))
+                return torch.diag(grad_fn(*args),0).type(torch.float64)
+        
+        return TorchFunctionWrapper(function=grad_func_elementwise, variables=self._variables)
+    def hessian(self, variable1, variable2, end_grad=False):
+        if variable1 not in self._inputs or variable2 not in self._inputs:
+            raise Exception("Gradient variable is not in the function!")
+
+        index1 = self._inputs.index(variable1)
+        index2 = self._inputs.index(variable2)
+        def wrapper_fn(*args):
+            kwargs = {self._inputs[i]: args[i] for i in range(len(args))}
+            return self._func(**kwargs)
+        hessian_fn = torch.func.jacrev(torch.func.jacrev(wrapper_fn, argnums=index1), argnums=index2)
+        def hessian_func(**kwargs):
+            args = [kwargs[input] for input in self._inputs]
+            if end_grad:
+                return hessian_fn(*args).detach().type(torch.float64)
+            else:
+                return hessian_fn(*args).type(torch.float64)
+        return TorchFunctionWrapper(function=hessian_func, variables=self._variables)
     
     def __call__(self, **kwargs):
         if self._cache is None:

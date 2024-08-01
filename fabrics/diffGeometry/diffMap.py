@@ -6,32 +6,51 @@ from fabrics.helpers.variables import Variables, TorchVariables
 import torch
 class TorchDifferentialMap:
     _vars: Variables
-    _J: ca.SX
-    _Jdot: ca.SX
+    # _J: ca.SX
+    # _Jdot: ca.SX
 
-    def __init__(self, phi: ca.SX, variables: Variables, **kwargs):
+    def __init__(self, phi, variables, **kwargs):
         self._vars = variables
         Jdot_sign = -1
         if 'Jdot_sign' in kwargs.keys():
             Jdot_sign = kwargs.get('Jdot_sign')
         q = self._vars.position_variable()
         qdot = self._vars.velocity_variable()
-        J = ca.jacobian(phi,q)
-        Jdot = Jdot_sign * ca.jacobian(ca.mtimes(J, qdot), q)
-        # phidot = ca.mtimes(J, qdot)
-        self._caFunc = CasadiFunctionWrapper(
-            "funs", self._vars, {"phi": phi, "J":J, "Jdot": Jdot}
-        )
-        inputs = list(self._caFunc._inputs.keys())
-        self._q = inputs[0]
-        self._qdot = inputs[1]
-        self._vars = TorchVariables(position = self._q, velocity = self._qdot, parameter_variables=set(inputs[2:]))
-        casadi = lambda **inputs: self._caFunc.evaluate(**inputs)
-        self._phi = TorchFunctionWrapper(function=lambda **inputs: torch.tensor(casadi(**inputs)["phi"],dtype=torch.float64), variables=self._vars, name="dm.phi", iscasadi=True)
-        self._J = TorchFunctionWrapper(function=lambda **inputs: torch.tensor(casadi(**inputs)["J"],dtype=torch.float64), variables=self._vars,name="dm.J",iscasadi=True)
-        self._Jdot = TorchFunctionWrapper(function=lambda **inputs: torch.tensor(casadi(**inputs)["Jdot"],dtype=torch.float64), variables=self._vars,name="dm._Jdot",iscasadi=True)
-        self._Jdotqdot =self._Jdot @ self.qdot()   
-        self._Jdotqdot.set_name("Jdotqdot")
+        if isinstance(phi, ca.SX) and isinstance(self._vars, Variables):
+            J = ca.jacobian(phi,q)
+            Jdot = Jdot_sign * ca.jacobian(ca.mtimes(J, qdot), q)
+            self._caFunc = CasadiFunctionWrapper(
+                "funs", self._vars, {"phi": phi, "J":J, "Jdot": Jdot}
+            )
+            inputs = list(self._caFunc._inputs.keys())
+            self._q = inputs[0]
+            self._qdot = inputs[1]
+            self._vars = TorchVariables(position = self._q, velocity = self._qdot, parameter_variables=set(inputs[2:]))
+            casadi = lambda **inputs: self._caFunc.evaluate(**inputs)
+            self._phi = TorchFunctionWrapper(function=lambda **inputs: torch.tensor(casadi(**inputs)["phi"],dtype=torch.float64), variables=self._vars, name="dm.phi", iscasadi=True)
+            self._phi.set_name("phi")
+            self._J = TorchFunctionWrapper(function=lambda **inputs: torch.tensor(casadi(**inputs)["J"],dtype=torch.float64), variables=self._vars,name="dm.J",iscasadi=True)
+            self._J.set_name("J")
+            self._Jdot = TorchFunctionWrapper(function=lambda **inputs: torch.tensor(casadi(**inputs)["Jdot"],dtype=torch.float64), variables=self._vars,name="dm._Jdot",iscasadi=True)
+            self._Jdot.set_name("Jdot")
+            self._Jdotqdot =self._Jdot @ self.qdot()   
+            self._Jdotqdot.set_name("Jdotqdot")
+        elif isinstance(phi, TorchFunctionWrapper) and isinstance(self._vars, TorchVariables):
+            self._phi = phi
+            self._phi.set_name("phi_limit")
+            self._J = phi.grad(q)
+            self._J.set_name("J_limit")
+            self._Jdot = Jdot_sign * (self._J @ self.qdot()).grad(q)
+            self._Jdot.set_name("Jdot_limit")
+            self._Jdotqdot = self._Jdot @ self.qdot()
+            self._Jdotqdot.set_name("Jdotqdot_limit")
+        elif isinstance(phi, str):
+            self._phi = phi
+            # self._J = J
+            #etc
+        else:
+            raise Exception("type error!")
+            
         # self.f_phi = ca.Function('f_phi', [q], [self._phi])
         # self.f_J = ca.Function('f_J', [q, qdot], [self._J])
         # self.f_Jdot = ca.Function('f_Jdot', [q, qdot], [self._Jdot])

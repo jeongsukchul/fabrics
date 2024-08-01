@@ -45,7 +45,7 @@ def initalize_environment(render=True, obstacle_resolution = 8):
     goal_orientation = [-0.366, 0.0, 0.0, 0.3305]
     # goal_orientation = [1.0, 0.0, 0.0, 0.0]
     rotation_matrix = quaternionic.array(goal_orientation).to_rotation_matrix
-    whole_position = [0.3, 0.2, 1] #[0.1, 0.6, 0.8]
+    whole_position = [-0.3, -2.2, 2] #[0.1, 0.6, 0.8] # [0.3, 0.2, 1]
     # whole_position_obstacles = [10.1, 10.6, 10.8]
     # for i in range(obstacle_resolution + 1):
     #     angle = i/obstacle_resolution * 2.*np.pi
@@ -149,15 +149,26 @@ def set_planner(goal: GoalComposition, degrees_of_freedom: int = 7, obstacle_res
         forward_kinematics,
     )
     planner2 = TorchPlanner(degrees_of_freedom, forward_kinematics)
+    panda_limits = [
+            [-2.8973, 2.8973],
+            [-1.7628, 1.7628],
+            [-2.8973, 2.8973],
+            [-3.0718, -0.0698],
+            [-2.8973, 2.8973],
+            [-0.0175, 3.7525],
+            [-2.8973, 2.8973]
+        ]    
     # panda_limits = [
-    #         [-2.8973, 2.8973],
-    #         [-1.7628, 1.7628],
-    #         [-2.8973, 2.8973],
-    #         [-3.0718, -0.0698],
-    #         [-2.8973, 2.8973],
-    #         [-0.0175, 3.7525],
-    #         [-2.8973, 2.8973]
+    #         [1-1.8973, 2.8973-1],
+    #         [1-1.7628, 1.7628-1],
+    #         [1-2.8973, 2.8973-1],
+    #         [1-3.0718, -0.0698-1],
+    #         [1-2.8973, 2.8973-1],
+    #         [1-0.0175, 3.7525-1],
+    #         [1-2.8973, 2.8973-1]
     #     ]
+    panda_limits_torch = torch.tensor(panda_limits, dtype=torch.float64)
+    
     collision_links = ['panda_link1', 'panda_link4', 'panda_link6', 'panda_hand']
     self_collision_pairs = {}
     # The planner hides all the logic behind the function set_components.
@@ -165,13 +176,13 @@ def set_planner(goal: GoalComposition, degrees_of_freedom: int = 7, obstacle_res
         collision_links=collision_links,
         goal=goal,
         number_obstacles=obstacle_resolution,
-        # limits=panda_limits,
+        limits=panda_limits,
     )
     planner2.set_components(
         collision_links=collision_links,
         goal=goal,
         number_obstacles=obstacle_resolution,
-        # limits=panda_limits,
+        limits=panda_limits_torch,
     )
     planner.concretize()
     return planner, planner2
@@ -267,9 +278,56 @@ def run_panda_ring_example(n_steps=5000, render=True, serialize=False, planner=N
             radius_body_panda_hand=0.1,
             # angle_goal_1=np.array(sub_goal_0_rotation_matrix),
         )
+        panda_limits = [
+            [-2.8973, 2.8973],
+            [-1.7628, 1.7628],
+            [-2.8973, 2.8973],
+            [-3.0718, -0.0698],
+            [-2.8973, 2.8973],
+            [-0.0175, 3.7525],
+            [-2.8973, 2.8973]
+        ]
+        panda_limits = torch.tensor(panda_limits, dtype=torch.float64)
         cur_time = time.time()
         print("dt1", cur_time-prev_time)
+        # q=torch.from_numpy(ob_robot["joint_state"]["position"]).type(torch.float64)
+        # print("lower_limit", q-panda_limits[:,0])
+        # print("upper_limit", panda_limits[:,1]-q)
         prev_time = time.time()
+        # qdot=torch.from_numpy(ob_robot["joint_state"]["velocity"]).type(torch.float64),
+        # # x_obsts=x_obsts,
+        # # radius_obsts=radius_obsts,
+        # x_goal_0=torch.from_numpy(ob_robot['FullSensor']['goals'][obstacle_resolution_ring+3]['position']).type(torch.float64),
+        # weight_goal_0=torch.from_numpy(ob_robot['FullSensor']['goals'][obstacle_resolution_ring+3]['weight']).type(torch.float64),
+        # radius_body_panda_link1=0.1,
+        # radius_body_panda_link4=0.1,
+        # radius_body_panda_link6=0.15,
+        # radius_body_panda_hand=0.1,
+    
+        # # Number of copies/batch size
+        # batch_size = 5
+
+        # # Create batched tensors by repeating and stacking
+        # q_batched = torch.stack([q]*batch_size)
+        # qdot_batched = torch.stack([qdot]*batch_size)
+        # x_goal_0_batched = torch.stack([x_goal_0]*batch_size)
+        # weight_goal_0_batched = torch.stack([weight_goal_0]*batch_size)
+
+        # # Create batched radius values
+        # radius_body_panda_link1_batched = torch.tensor([radius_body_panda_link1]*batch_size)
+        # radius_body_panda_link4_batched = torch.tensor([radius_body_panda_link4]*batch_size)
+        # radius_body_panda_link6_batched = torch.tensor([radius_body_panda_link6]*batch_size)
+        # radius_body_panda_hand_batched = torch.tensor([radius_body_panda_hand]*batch_size)
+        # batched_inputs = {
+        #     'q': q_batched,
+        #     'qdot': qdot_batched,
+        #     'x_goal_0': x_goal_0_batched,
+        #     'weight_goal_0': weight_goal_0_batched,
+        #     'radius_body_panda_link1': radius_body_panda_link1_batched,
+        #     'radius_body_panda_link4': radius_body_panda_link4_batched,
+        #     'radius_body_panda_link6': radius_body_panda_link6_batched,
+        #     'radius_body_panda_hand': radius_body_panda_hand_batched
+        # }
         action2= planner2.compute_action(
             q=torch.from_numpy(ob_robot["joint_state"]["position"]).type(torch.float64),
             qdot=torch.from_numpy(ob_robot["joint_state"]["velocity"]).type(torch.float64),
@@ -299,7 +357,7 @@ def run_panda_ring_example(n_steps=5000, render=True, serialize=False, planner=N
         # print("J",np.sum(J2.numpy()-J1))
         # print("Jdot",np.sum(Jdot2.numpy()-Jdot1))
         # print("qdot",J2.numpy()@ -Jdot1))
-        ob, *_ = env.step(action1)
+        ob, *_ = env.step(action2.numpy())
         
 
     # for _ in range(n_steps):

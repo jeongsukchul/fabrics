@@ -66,30 +66,33 @@ class FabricPlannerConfig:
 
 from typing import Callable, Tuple
 import torch
-Energy = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
-Geometry = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
-attractorPotential = Callable[[torch.Tensor],torch.Tensor]
-attractorMetric = Callable[[torch.Tensor],torch.Tensor]
-damperBeta = Callable[[torch.Tensor, torch.Tensor, torch.Tensor], torch.Tensor]
-damperEta = Callable[[torch.Tensor], torch.Tensor]
+EnergyExpression = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
+GeometryExpression = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
+AttractorPotentialExpression = Callable[[torch.Tensor],torch.Tensor]
+AttractorMetricExpression = Callable[[torch.Tensor],torch.Tensor]
+DamperBetaExpression = Callable[[torch.Tensor, torch.Tensor, torch.Tensor], torch.Tensor]
+DamperEtaExpression = Callable[[torch.Tensor], torch.Tensor]
 @dataclass
 class TorchConfig:
     forcing_type: str = 'speed-controlled' # options are 'speed-controlled', 'pure-geometry', 'execution-energy', 'forced', 'forced-energized'
-    base_energy: Energy = lambda x,xdot: (0.5*0.2 * torch.sum(xdot**2, dim=-1)).squeeze()
-    collision_geometry: Geometry = lambda x, xdot: -0.5 /(x**5) * (-0.5* torch.sign(xdot)-1)*xdot **2
-    collision_finsler : Energy = lambda x, xdot: 0.1/(x**1) * xdot**2
-    limit_geometry : Geometry = lambda x, xdot: -0.1/x * xdot ** 2
-    limit_finsler : Energy = lambda x, xdot: 0.1/x *(-0.5 * torch.sign(xdot)-1) * xdot**2
-    self_collision_geometry : Geometry = lambda x, xdot: -0.5/x *(-0.5*(torch.sign(xdot)-1))*xdot**2
-    self_collision_finsler : Energy = lambda x, xdot: 0.1/x * xdot**2
-    geometry_plane_constraint : Geometry = lambda x, xdot: -0.5/(x**5) *(-0.5*(torch.sign(xdot)-1))*xdot**2
-    finsler_plane_constraint : Energy = lambda x, xdot: 0.1/x *xdot**2
-    attractor_metric : attractorMetric = lambda x, xdot: ((2.0-0.3)* torch.exp(-1*(0.75**2 * torch.sum(x**2,dim=-1)))+0.3)*torch.eye(x.shape[-1])
+    base_energy: EnergyExpression = lambda x,xdot: (0.5*0.2 * torch.sum(xdot**2, dim=-1)).squeeze()
+    collision_geometry: GeometryExpression = lambda x, xdot: -0.5 /(x**5) * (-0.5* torch.sign(xdot)-1)*xdot **2
+    collision_finsler : EnergyExpression = lambda x, xdot: 0.1/(x**1) * xdot**2
+    limit_geometry : GeometryExpression = lambda x, xdot: -0.1/x * xdot ** 2
+    limit_finsler : EnergyExpression = lambda x, xdot: 0.1/x *(-0.5 * (torch.sign(xdot)-1)) * xdot**2
+    self_collision_geometry : GeometryExpression = lambda x, xdot: -0.5/x *(-0.5*(torch.sign(xdot)-1))*xdot**2
+    self_collision_finsler : EnergyExpression = lambda x, xdot: 0.1/x * xdot**2
+    geometry_plane_constraint : GeometryExpression = lambda x, xdot: -0.5/(x**5) *(-0.5*(torch.sign(xdot)-1))*xdot**2
+    finsler_plane_constraint : EnergyExpression = lambda x, xdot: 0.1/x *xdot**2
+    attractor_metric : AttractorMetricExpression = lambda x, xdot: ((2.0-0.3)* torch.exp(-1*(0.75**2 * torch.sum(x**2,dim=-1)))+0.3)*torch.eye(x.shape[-1])
     # attractor_metric : attractorMetric = lambda x, xdot: (0.75**2 * torch.sum(x**2,dim=-1)) * torch.eye(x.shape[-1])
-    attractor_potential : attractorPotential = lambda x, xdot: ( 5.0 * ( torch.sqrt(torch.sum(x ** 2,dim=-1)) + 0.1* torch.log(1+ torch.exp(-2 *10 * torch.sqrt(torch.sum(x ** 2, dim=-1))))) ).squeeze()
+    attractor_potential : AttractorPotentialExpression = lambda x, xdot:  5.0 * ( torch.sqrt(torch.sum(x ** 2,dim=-1)) + 0.1* torch.log(1+ torch.exp(-2 *10 * torch.sqrt(torch.sum(x ** 2, dim=-1))))) 
     # attractor_potential : attractorPotential = lambda x, xdot: torch.norm(x,p=2,dim=-1)
-    damper_beta : damperBeta = lambda x, a_ex, a_le: 0.5*(torch.tanh(-0.5* (torch.sqrt(torch.sum(x**2,dim=-1)-0.02))+1)) * 6.5 + 0.01 + max(0,(a_ex-a_le).item())
-    damper_eta : damperEta = lambda xdot: 0.5 * (torch.tanh(-0.9* (1- 1/2)* torch.sum(xdot**2, dim=-1)-0.5)+1)
+    damper_beta : DamperBetaExpression = lambda x, a_ex, a_le: 0.5*(torch.tanh(-0.5* (torch.sqrt(torch.sum(x**2,dim=-1))-0.02))+1) * 6.5 + 0.01 + torch.maximum(torch.zeros_like(a_ex),a_ex-a_le)
+    # damper_beta: str = (
+    #     "0.5 * (ca.tanh(-0.5 * (ca.norm_2(x) - 0.02)) + 1) * 6.5 + 0.01 + ca.fmax(0, sym('a_ex') - sym('a_le'))"
+    # )
+    damper_eta : DamperEtaExpression = lambda xdot: 0.5 * (torch.tanh(-0.9* (1- 1/2)* torch.sum(xdot**2, dim=-1)-0.5)+1)
     
 @dataclass
 class Subgoal:

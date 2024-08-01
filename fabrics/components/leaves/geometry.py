@@ -7,13 +7,52 @@ from fabrics.components.maps.parameterized_maps import (
     CuboidSphereMap,
     CapsuleCuboidMap,
 )
-from fabrics.diffGeometry.diffMap import DifferentialMap, ExplicitDifferentialMap
-from fabrics.diffGeometry.geometry import Geometry
-from fabrics.diffGeometry.energy import Lagrangian
+from fabrics.diffGeometry.diffMap import DifferentialMap, ExplicitDifferentialMap, TorchDifferentialMap
+from fabrics.diffGeometry.geometry import Geometry, TorchGeometry
+from fabrics.diffGeometry.energy import Lagrangian, TorchLagrangian
 from fabrics.components.leaves.leaf import Leaf, TorchLeaf
-from fabrics.helpers.variables import Variables
+from fabrics.helpers.casadiFunctionWrapper import TorchFunctionWrapper
+from fabrics.helpers.variables import TorchVariables, Variables
 from fabrics.helpers.functions import parse_symbolic_input
+from fabrics.planner.configuration_classes import EnergyExpression
+from fabrics.planner.configuration_classes import GeometryExpression
 
+class TorchGenericGeometryLeaf(TorchLeaf):
+    def extract_or_create_variable(self, variable_name: str, variable_dimension: int) -> str:
+        if variable_name in self._parent_variables.parameters():
+            return self._parent_variables.parameters()[variable_name]
+        else:
+            return "variable_name"
+
+    def set_geometry(self, geometry: GeometryExpression) -> None:
+        """
+        Sets the geometry from a string.
+
+        Params
+        ---------
+        geometry: str
+            String that holds the geometry. The variables must be x, xdot.
+        """
+
+        h_geom = TorchFunctionWrapper(expression=geometry, variables=self._leaf_variables,ex_input=self._leaf_variables.position_velocity_variables(), name="limit_h")
+        # self._parent_variables.add_parameters(new_parameters)
+        self._geo = TorchGeometry(h=h_geom, var=self._leaf_variables)
+
+    def set_finsler_structure(self, finsler_structure: EnergyExpression) -> None:
+        """
+        Sets the Finsler structure from a string.
+
+        Params
+        ---------
+        finsler_structure: str
+            String that holds the Finsler structure. The variables must be x, xdot.
+        """
+        x = self._x
+        xdot = self._xdot
+        lagrangian_geometry = TorchFunctionWrapper(expression=finsler_structure, variables=self._leaf_variables,ex_input=self._leaf_variables.position_velocity_variables(), name="limit_energy")
+        
+        # self._parent_variables.add_parameters(new_parameters)
+        self._lag = TorchLagrangian(lagrangian_geometry, var=self._leaf_variables, isLimit=True)
 class GenericGeometryLeaf(Leaf):
 
     def extract_or_create_variable(self, variable_name: str, variable_dimension: int) -> ca.SX:
@@ -52,15 +91,38 @@ class GenericGeometryLeaf(Leaf):
         self._parent_variables.add_parameters(new_parameters)
         self._lag = Lagrangian(lagrangian_geometry, var=self._leaf_variables)
 
-class AvoidanceLeaf(GenericGeometryLeaf):
-    def _init__(
-            self, 
-            parent_variables: Variables,
-            name: str,
-            phi: ca.SX,
-            ):
-        super().__init__(parent_variables, name, phi)
+class TorchLimitLeaf(TorchGenericGeometryLeaf):
+    """
+    The LimitLeaf is geometry leaf for joint limits.
 
+    This leaf is not parameterized as the joint limits remain static for one robot.
+    """
+    def __init__(
+        self,
+        parent_variables: TorchVariables,
+        # joint_index: int,
+        limit: float,
+        limit_index: int,
+    ):
+        limit_name = f"limit_{limit_index}"
+        if limit_index == 0:
+            phi_ex=  lambda x: x-limit
+            phi = TorchFunctionWrapper(expression=phi_ex, variables=parent_variables, ex_input = parent_variables.position_variable())
+        elif limit_index == 1:
+            phi_ex = lambda x: limit-x
+            phi = TorchFunctionWrapper(expression=phi_ex, variables=parent_variables, ex_input = parent_variables.position_variable())
+        else:
+            print("There are only two limits.")
+        super().__init__(
+            parent_variables,
+            f"{limit_name}_leaf",
+            phi,
+            dim=1
+        )
+        self.set_forward_map()
+
+    def set_forward_map(self):
+        self._map = TorchDifferentialMap(self._forward_kinematics, self._parent_variables)
 
 class LimitLeaf(GenericGeometryLeaf):
     """
@@ -91,6 +153,17 @@ class LimitLeaf(GenericGeometryLeaf):
 
     def set_forward_map(self):
         self._map = DifferentialMap(self._forward_kinematics, self._parent_variables)
+
+class AvoidanceLeaf(GenericGeometryLeaf):
+    def _init__(
+            self, 
+            parent_variables: Variables,
+            name: str,
+            phi: ca.SX,
+            ):
+        super().__init__(parent_variables, name, phi)
+
+
 
 class SelfCollisionLeaf(GenericGeometryLeaf):
     """
