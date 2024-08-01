@@ -1,13 +1,12 @@
 [tool.poetry]
 name = "fabric-naive"
 version = "0.1.0"
-description = "naive implement using casadi and pytorch"
+description = ""
 authors = ["jeongsukchul <tjrcjf410@snu.ac.kr>"]
-license = "non"
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "3.9"
+python = ">=3.8.0"
 
 
 [build-system]
