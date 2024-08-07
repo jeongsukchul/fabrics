@@ -6,6 +6,7 @@ import casadi as ca
 import deprecation
 import numpy as np
 
+from fabrics.diffGeometry.spec import TorchSpec
 from forwardkinematics.fksCommon.fk import ForwardKinematics
 from forwardkinematics.urdfFks.urdfFk import LinkNotInURDFError
 from mpscenes.goals.goal_composition import GoalComposition
@@ -98,9 +99,13 @@ class TorchPlanner(object):
         q = self._variables.position_variable()
         qdot = self._variables.velocity_variable() 
         base_energy = TorchFunctionWrapper(expression=self._config.base_energy,variables=self._variables.toTorch(), ex_input=["q","qdot"], name="base_energy")
+        base_M = TorchFunctionWrapper(expression=self._config.base_M,variables=self._variables.toTorch(), ex_input=["q","qdot"], name="base_energy")
+        self.base_M = base_M
+        base_f = TorchFunctionWrapper(expression=self._config.base_f,variables=self._variables.toTorch(), ex_input=["q","qdot"], name="base_energy")
+        base_spec = TorchSpec(base_M, f=base_f, var=self._variables.toTorch())
         base_h = TorchFunctionWrapper(expression=lambda : torch.zeros(self._dof,dtype=torch.float64), variables=self._variables.toTorch(), ex_input=[])
         base_geometry = TorchGeometry(h = base_h, var=self._variables.toTorch())
-        base_lagrangian = TorchLagrangian(base_energy, var=self._variables.toTorch())
+        base_lagrangian = TorchLagrangian(base_energy, spec=base_spec, var=self._variables.toTorch())
         self._geometry = TorchWeightedGeometry(g=base_geometry, le=base_lagrangian)
         self.base_energy = base_energy
     
@@ -143,10 +148,12 @@ class TorchPlanner(object):
             ) -> None:
         lower_limit_geometry = TorchLimitLeaf(self._variables.toTorch(), limits[:,0], 0)
         lower_limit_geometry.set_geometry(self._config.limit_geometry)
-        lower_limit_geometry.set_finsler_structure(self._config.limit_finsler)
+        # lower_limit_geometry.set_finsler_structure(self._config.limit_finsler)
+        lower_limit_geometry.set_lag(self._config.limit_finsler,self._config.limit_M, self._config.limit_f)
         upper_limit_geometry = TorchLimitLeaf(self._variables.toTorch(), limits[:,1], 1)
         upper_limit_geometry.set_geometry(self._config.limit_geometry)
-        upper_limit_geometry.set_finsler_structure(self._config.limit_finsler)
+        # upper_limit_geometry.set_finsler_structure(self._config.limit_finsler)
+        upper_limit_geometry.set_lag(self._config.limit_finsler,self._config.limit_M, self._config.limit_f)
         self.add_leaf(lower_limit_geometry)
         self.add_leaf(upper_limit_geometry)
 
@@ -224,8 +231,8 @@ class TorchPlanner(object):
                 raise ExpressionSparseError()
             self._variables.add_parameter(f'x_goal_{j}', ca.SX.sym(f'x_goal_{j}', sub_goal.dimension()))
             attractor = TorchGenericAttractor(self._variables, fk_sub_goal, f"goal_{j}")
-            attractor.set_potential(self._config.attractor_potential)
-            attractor.set_metric(self._config.attractor_metric)
+            attractor.set_geom(self._config.attractor_geom)
+            attractor.set_lag(self._config.attractor_metric, self._config.attractor_force)
             self.add_leaf(attractor, prime_leaf=sub_goal.is_primary_goal())
 
     # def test_init_function(self, **kwargs):
@@ -520,19 +527,78 @@ class TorchPlanner(object):
         # print("Jdot2", Jdot)
         # force_alpha = self._forced_geometry._alpha(**kwargs)
         # print("leves",self.get_leaves())
-        
-        action = self._xddot(**kwargs)
-        action_magnitude = torch.linalg.norm(action, dim=-1)
+        # l = TorchFunctionWrapper(expression=self._config.attractor_l, variables=self._variables.toTorch(), ex_input = ["q","qdot"])
+        # dldx_sym = TorchFunctionWrapper(expression=self._config.attractor_dldx, variables=self._variables.toTorch(), ex_input=["q","qdot"])
+        # dldxdxdot_sym = TorchFunctionWrapper(expression=self._config.attractor_dldxdxdot, variables=self._variables.toTorch(), ex_input=["q","qdot"])
+        # f_sym = TorchFunctionWrapper(expression=self._config.attractor_force, variables=self._variables.toTorch(), ex_input=["q","qdot"])
+        # psi =  TorchFunctionWrapper(expression=self._config.attractor_potential, variables=self._variables.toTorch(), ex_input=["q","qdot"])
+        # h_sym = TorchFunctionWrapper(expression=self._config.attractor_geom, variables=self._variables.toTorch(), ex_input=["q","qdot"])
+        # h= psi.grad("q")
+        # print("h", h(**kwargs))
+        # print("h_sym", h_sym(**kwargs))
+        # dldx = l.grad("q")
+        # dldxdxdot = dldx.grad("qdot")
+        # f = dldxdxdot.transpose()@self._geometry.xdot() -dldx
+        # self.base_M(**kwargs)
 
-        if action_magnitude < eps:
-            # logging.warning(f"Fabrics: Avoiding small action with magnitude {action_magnitude}")
-            action *= 0.0
-        elif action_magnitude > 1/eps:
-            logging.warning(f"Fabrics: Avoiding large action with magnitude {action_magnitude}")
-            action *= 0.0
+        # print("exinput", len([kwargs[input] for input in l._ex_input]))
+        # print("l", l(**kwargs))
+        # print("dldx", dldx(**kwargs))
+        # print("dLdx sym", dldx_sym(**kwargs))
+        # print("dldxdxdot", dldxdxdot(**kwargs))
+        # print("dLdxdxdot sym", dldxdxdot_sym(**kwargs))
+        # print("f", f(**kwargs))
+        # print("f", f_sym(**kwargs))
+        action = self._xddot(**kwargs)
+        print("grad_count", TorchFunctionWrapper.grad_count)
+        TorchFunctionWrapper.grad_count = 0
+        # ex = self._config.attractor_metric
+        # f = TorchFunctionWrapper(expression=ex, variables=self._geometry._vars, ex_input=self._geometry._vars.position_velocity_variables())
+        # f_grad = f.grad("q")
+        # f._func(**kwargs)
+        # f._func(**kwargs)
+        # f._func(**kwargs)
+        # f._func(**kwargs)
+        # f._func(**kwargs)
+        # f._func(**kwargs)
+        # f._func(**kwargs)
+        # f._func(**kwargs)
+        # f._func(**kwargs)
+        # f._func(**kwargs)
+        # f._func(**kwargs)
+        # f._func(**kwargs)
+        # f._func(**kwargs)
+        # f._func(**kwargs)
+        # f._func(**kwargs)
+        # f_grad._func(**kwargs)
+        # f_grad._func(**kwargs)
+        # f_grad._func(**kwargs)
+        # f_grad._func(**kwargs)
+        # f_grad._func(**kwargs)
+        # f_grad._func(**kwargs)
+        # f_grad._func(**kwargs)
+        # f_grad._func(**kwargs)
+        # f_grad._func(**kwargs)
+        # f_grad._func(**kwargs)
+        # f_grad._func(**kwargs)
+        # f_grad._func(**kwargs)
+        # f_grad._func(**kwargs)
+        # f_grad._func(**kwargs)
+        # f_grad._func(**kwargs)
+
+        # action = torch.zeros(self._dof)
+        # action_magnitude = torch.linalg.norm(action, dim=-1)
+
+        # if action_magnitude < eps:
+        #     # logging.warning(f"Fabrics: Avoiding small action with magnitude {action_magnitude}")
+        #     action *= 0.0
+        # elif action_magnitude > 1/eps:
+        #     logging.warning(f"Fabrics: Avoiding large action with magnitude {action_magnitude}")
+        #     action *= 0.0
         return action
 
 class ParameterizedFabricPlanner(object):
+    
     _dof: int
     _config: FabricPlannerConfig
     _problem_configuration : ProblemConfiguration
@@ -546,21 +612,10 @@ class ParameterizedFabricPlanner(object):
         self._forward_kinematics = forward_kinematics
         self.initialize_joint_variables()
         self.set_base_geometry()
-
         self._target_velocity = np.zeros(self._geometry.x().size()[0])
         self._ref_sign = 1
         self.leaves = {}
 
-    def test_init_function(self, **kwargs):
-        # print("base energy : ", self._geometry._le._l(**kwargs))
-        print("q", kwargs['q'])
-        print("qdot", kwargs['qdot'])
-        print("leavs", self.get_leaves(["goal_0_leaf"]))
-        # attractor = self.leaves['goal_0_leaf']
-        # attractor._lag._S.concretize()
-        M, f, _, alpha = self._geometry.evaluate(**kwargs)
-        print("pulled M",  M)
-        print("pulled f", f)
     """ INITIALIZING """
 
     def load_fabrics_configuration(self, fabrics_configuration: dict):
@@ -575,9 +630,9 @@ class ParameterizedFabricPlanner(object):
         q = self._variables.position_variable()
         qdot = self._variables.velocity_variable()
         new_parameters, base_energy =  parse_symbolic_input(self._config.base_energy, q, qdot)
-        self._base_energy = base_energy
+        print('basse_ energy', base_energy)
         self._variables.add_parameters(new_parameters)
-        base_geometry = Geometry(h=ca.SX(np.zeros(self._dof)), var=self._variables)
+        base_geometry = Geometry(h=ca.SX(np.zeros(self._dof)), var=self.variables)
         base_lagrangian = Lagrangian(base_energy, var=self._variables)
         self._geometry = WeightedGeometry(g=base_geometry, le=base_lagrangian)
 
@@ -600,6 +655,24 @@ class ParameterizedFabricPlanner(object):
         weighted_geometry = WeightedGeometry(g=geometry, le=lagrangian)
         self.add_weighted_geometry(forward_map, weighted_geometry)
 
+    def add_dynamic_geometry(
+        self,
+        forward_map: DifferentialMap,
+        dynamic_map: DynamicDifferentialMap,
+        geometry_map: DifferentialMap,
+        lagrangian: Lagrangian,
+        geometry: Geometry,
+    ) -> None:
+        assert isinstance(forward_map, DifferentialMap)
+        assert isinstance(geometry_map, DifferentialMap)
+        assert isinstance(dynamic_map, DynamicDifferentialMap)
+        assert isinstance(lagrangian, Lagrangian)
+        assert isinstance(geometry, Geometry)
+        weighted_geometry = WeightedGeometry(g=geometry, le=lagrangian, ref_names=dynamic_map.ref_names())
+        pwg1 = weighted_geometry.pull(geometry_map)
+        pwg2 = pwg1.dynamic_pull(dynamic_map)
+        pwg3 = pwg2.pull(forward_map)
+        self._geometry += pwg3
 
     def add_weighted_geometry(
         self, forward_map: DifferentialMap, weighted_geometry: WeightedGeometry
@@ -644,32 +717,44 @@ class ParameterizedFabricPlanner(object):
         assert isinstance(geometry, Geometry)
         if not hasattr(self, '_forced_geometry'):
             self._forced_geometry = deepcopy(self._geometry)
-        self._pulled_attractor = WeightedGeometry(g=geometry,le=lagrangian).pull(forward_map)
-        
         self._forced_geometry += WeightedGeometry(
             g=geometry, le=lagrangian
         ).pull(forward_map)
         if prime_forcing_leaf:
             self._forced_variables = geometry._vars
             self._forced_forward_map = forward_map
-
         self._variables = self._variables + self._forced_geometry._vars
         self._geometry.concretize()
         self._forced_geometry.concretize(ref_sign=self._ref_sign)
 
-    def add_limit_geometry(
-            self,
-            joint_index: int,
-            limits: list,
-            ) -> None:
-        lower_limit_geometry = LimitLeaf(self._variables, joint_index, limits[0], 0)
-        lower_limit_geometry.set_geometry(self.config.limit_geometry)
-        lower_limit_geometry.set_finsler_structure(self.config.limit_finsler)
-        upper_limit_geometry = LimitLeaf(self._variables, joint_index, limits[1], 1)
-        upper_limit_geometry.set_geometry(self.config.limit_geometry)
-        upper_limit_geometry.set_finsler_structure(self.config.limit_finsler)
-        self.add_leaf(lower_limit_geometry)
-        self.add_leaf(upper_limit_geometry)
+    def add_dynamic_forcing_geometry(
+        self,
+        forward_map: DifferentialMap,
+        dynamic_map: DifferentialMap,
+        lagrangian: Lagrangian,
+        geometry: Geometry,
+        target_velocity: ca.SX,
+        prime_forcing_leaf: bool,
+    ) -> None:
+        assert isinstance(forward_map, DifferentialMap)
+        assert isinstance(dynamic_map, DynamicDifferentialMap)
+        assert isinstance(lagrangian, Lagrangian)
+        assert isinstance(geometry, Geometry)
+        assert isinstance(target_velocity, ca.SX)
+        if not hasattr(self, '_forced_geometry'):
+            self._forced_geometry = deepcopy(self._geometry)
+        wg = WeightedGeometry(g=geometry, le=lagrangian)
+        pwg = wg.dynamic_pull(dynamic_map)
+        ppwg = pwg.pull(forward_map)
+        self._forced_geometry += ppwg
+        if prime_forcing_leaf:
+            self._forced_variables = geometry._vars
+            self._forced_forward_map = forward_map
+        self._variables = self._variables + self._forced_geometry._vars
+        self._target_velocity += ca.mtimes(ca.transpose(forward_map._J), target_velocity)
+        self._ref_sign = -1
+        self._geometry.concretize()
+        self._forced_geometry.concretize(ref_sign=self._ref_sign)
 
     def set_execution_energy(self, execution_lagrangian: Lagrangian):
         assert isinstance(execution_lagrangian, Lagrangian)
@@ -697,6 +782,7 @@ class ParameterizedFabricPlanner(object):
         beta_expression = self.config.damper_beta
         eta_expression = self.config.damper_eta
         self._damper = Damper(beta_expression, eta_expression, x_psi, dm_psi, exLag._l)
+        self._variables.add_parameters(self._damper.symbolic_parameters())
 
     def get_forward_kinematics(self, link_name, position_only: bool = True) -> ca.SX:
         if isinstance(link_name, ca.SX):
@@ -707,6 +793,299 @@ class ParameterizedFabricPlanner(object):
                 position_only=position_only
             )
         return fk
+
+    def add_capsule_sphere_geometry(
+            self,
+            obstacle_name: str,
+            capsule_name: str,
+            tf_capsule_origin: ca.SX,
+            capsule_length: float
+            ) -> None:
+        tf_origin_center_0 = np.identity(4)
+        tf_origin_center_0[2][3] = capsule_length / 2
+        tf_center_0 = ca.mtimes(tf_capsule_origin, tf_origin_center_0)
+        tf_origin_center_1 = np.identity(4)
+        tf_origin_center_1[2][3] = - capsule_length / 2
+        tf_center_1 = ca.mtimes(tf_capsule_origin, tf_origin_center_1)
+        capsule_sphere_leaf = CapsuleSphereLeaf(
+            self._variables,
+            capsule_name,
+            obstacle_name,
+            tf_center_0[0:3,3],
+            tf_center_1[0:3,3],
+        )
+        capsule_sphere_leaf.set_geometry(self.config.collision_geometry)
+        capsule_sphere_leaf.set_finsler_structure(self.config.collision_finsler)
+        self.add_leaf(capsule_sphere_leaf)
+
+    def add_capsule_cuboid_geometry(
+            self,
+            obstacle_name: str,
+            capsule_name: str,
+            tf_capsule_origin: ca.SX,
+            capsule_length: float
+    ):
+        tf_origin_center_0 = np.identity(4)
+        tf_origin_center_0[2][3] = capsule_length / 2
+        tf_center_0 = ca.mtimes(tf_capsule_origin, tf_origin_center_0)
+        tf_origin_center_1 = np.identity(4)
+        tf_origin_center_1[2][3] = - capsule_length / 2
+        tf_center_1 = ca.mtimes(tf_capsule_origin, tf_origin_center_1)
+        capsule_cuboid_leaf = CapsuleCuboidLeaf(
+            self._variables,
+            capsule_name,
+            obstacle_name,
+            tf_center_0[0:3,3],
+            tf_center_1[0:3,3],
+        )
+        capsule_cuboid_leaf.set_geometry(self.config.collision_geometry)
+        capsule_cuboid_leaf.set_finsler_structure(self.config.collision_finsler)
+        self.add_leaf(capsule_cuboid_leaf)
+
+    def add_spherical_obstacle_geometry(
+            self,
+            obstacle_name: str,
+            collision_link_name: str,
+            forward_kinematics: ca.SX,
+            ) -> None:
+        """
+        Add a spherical obstacle geometry to the fabrics planner.
+
+        Parameters
+        ----------
+        obstacle_name : str
+            The name of the obstacle to be added.
+        collision_link_name : str
+            The name of the robot's collision link that the obstacle is associated with.
+        forward_kinematics : ca.SX
+            The forward kinematics expression representing the obstacle's position.
+
+        Returns
+        -------
+        None
+
+        Notes
+        -----
+        - The `forward_kinematics` should be a symbolic
+            expression using CasADi SX for the obstacle's position.
+        - The `collision_geometry` and `collision_finsler` configurations
+            must be set before adding the obstacle.
+        - After adding the obstacle, it will be included in the robot's
+            configuration and affect its motion planning.
+
+        Example
+        -------
+        obstacle_name = "Sphere_Obstacle"
+        collision_link_name = "Link1"
+        forward_kinematics = ca.SX([fk_x, fk_y, fk_z])
+        robot.add_spherical_obstacle_geometry(
+            obstacle_name,
+            collision_link_name,
+            forward_kinematics
+        )
+        """
+        geometry = ObstacleLeaf(
+            self._variables,
+            forward_kinematics,
+            obstacle_name,
+            collision_link_name,
+        )
+        geometry.set_geometry(self.config.collision_geometry)
+        geometry.set_finsler_structure(self.config.collision_finsler)
+        self.add_leaf(geometry)
+
+    def add_dynamic_spherical_obstacle_geometry(
+            self,
+            obstacle_name: str,
+            collision_link_name: str,
+            forward_kinematics: ca.SX,
+            reference_parameters: dict,
+            dynamic_obstacle_dimension: int = 3,
+            ) -> None:
+        geometry = DynamicObstacleLeaf(
+            self._variables,
+            forward_kinematics[0:dynamic_obstacle_dimension],
+            obstacle_name,
+            collision_link_name,
+            reference_parameters=reference_parameters
+        )
+        geometry.set_geometry(self.config.collision_geometry)
+        geometry.set_finsler_structure(self.config.collision_finsler)
+        self.add_leaf(geometry)
+
+    def add_plane_constraint(
+            self,
+            constraint_name: str,
+            collision_link_name: str,
+            forward_kinematics: ca.SX,
+            ) -> None:
+
+        geometry = PlaneConstraintGeometryLeaf(
+            self._variables,
+            constraint_name,
+            collision_link_name,
+            forward_kinematics,
+        )
+        geometry.set_geometry(self.config.geometry_plane_constraint)
+        geometry.set_finsler_structure(self.config.finsler_plane_constraint)
+        self.add_leaf(geometry)
+
+    def add_cuboid_obstacle_geometry(
+            self,
+            obstacle_name: str,
+            collision_link_name: str,
+            forward_kinematics: ca.SX,
+            ) -> None:
+
+        geometry = SphereCuboidLeaf(
+            self._variables,
+            forward_kinematics,
+            obstacle_name,
+            collision_link_name,
+        )
+        geometry.set_geometry(self.config.collision_geometry)
+        geometry.set_finsler_structure(self.config.collision_finsler)
+        self.add_leaf(geometry)
+    
+    def add_esdf_geometry(
+            self,
+            collision_link_name: str,
+            ) -> None:
+        fk = self.get_forward_kinematics(collision_link_name)
+        geometry = ESDFGeometryLeaf(self._variables, collision_link_name, fk)
+        geometry.set_geometry(self.config.collision_geometry)
+        geometry.set_finsler_structure(self.config.collision_finsler)
+        self.add_leaf(geometry)
+
+    def add_spherical_self_collision_geometry(
+            self,
+            collision_link_1: str,
+            collision_link_2: str,
+            ) -> None:
+        fk_1 = self.get_forward_kinematics(collision_link_1)
+        fk_2 = self.get_forward_kinematics(collision_link_2)
+        fk = fk_2 - fk_1
+        if is_sparse(fk):
+            message = (
+                    f"Expression {fk} for links {collision_link_1} "
+                    "and {collision_link_2} is sparse and thus skipped."
+            )
+            logging.warning(message.format_map(locals()))
+        geometry = SelfCollisionLeaf(self._variables, fk, collision_link_1, collision_link_2)
+        geometry.set_geometry(self.config.self_collision_geometry)
+        geometry.set_finsler_structure(self.config.self_collision_finsler)
+        self.add_leaf(geometry)
+
+    def add_limit_geometry(
+            self,
+            joint_index: int,
+            limits: list,
+            ) -> None:
+        lower_limit_geometry = LimitLeaf(self._variables, joint_index, limits[0], 0)
+        lower_limit_geometry.set_geometry(self.config.limit_geometry)
+        lower_limit_geometry.set_finsler_structure(self.config.limit_finsler)
+        upper_limit_geometry = LimitLeaf(self._variables, joint_index, limits[1], 1)
+        upper_limit_geometry.set_geometry(self.config.limit_geometry)
+        upper_limit_geometry.set_finsler_structure(self.config.limit_finsler)
+        self.add_leaf(lower_limit_geometry)
+        self.add_leaf(upper_limit_geometry)
+
+    def load_problem_configuration(self, problem_configuration: ProblemConfiguration):
+        self._problem_configuration = ProblemConfiguration(**problem_configuration)
+        for obstacle in self._problem_configuration.environment.obstacles:
+            self._variables.add_parameters(obstacle.sym_parameters)
+
+        self.set_collision_avoidance()
+        #self.set_self_collision_avoidance()
+        self.set_joint_limits()
+        if self._config.forcing_type in ['forced', 'speed-controlled', 'forced-energized']:
+            self.set_goal_component(self._problem_configuration.goal_composition)
+        if self._config.forcing_type in ['speed-controlled', 'execution-energy', 'forced-energized']:
+            execution_energy = ExecutionLagrangian(self._variables)
+            self.set_execution_energy(execution_energy)
+        if self._config.forcing_type in ['speed-controlled']:
+            self.set_speed_control()
+
+    def set_joint_limits(self):
+        limits = np.zeros((self._dof, 2))
+        limits[:, 0] = self._problem_configuration.joint_limits.lower_limits
+        limits[:, 1] = self._problem_configuration.joint_limits.upper_limits
+        limits = limits.tolist()
+        for joint_index in range(len(limits)):
+            self.add_limit_geometry(joint_index, limits[joint_index])
+
+    def set_self_collision_avoidance(self) -> None:
+        if not self._problem_configuration.robot_representation.self_collision_pairs:
+            return
+        for link_name,  paired_links_names in self._problem_configuration.robot_representation.self_collision_pairs.items():
+            link = self._problem_configuration.robot_representation.collision_links[link_name]
+            for paired_link_name in paired_links_names:
+                paired_link = self._problem_configuration.robot_representation.collision_links[paired_link_name]
+                if isinstance(link, Sphere) and isinstance(paired_link, Sphere):
+                    self.add_spherical_self_collision_geometry(
+                            paired_link_name,
+                            link_name,
+                    )
+
+
+    def set_collision_avoidance(self) -> None:
+        if not self._problem_configuration.robot_representation.collision_links:
+            return
+        for link_name, collision_link in self._problem_configuration.robot_representation.collision_links.items():
+            fk = self.get_forward_kinematics(link_name, position_only=False)
+            if fk.shape == (3, 3):
+                fk_augmented = ca.SX.eye(4)
+                fk_augmented[0:2, 0:2] = fk[0:2, 0:2]
+                fk_augmented[0:2, 3] = fk[0:2, 2]
+                fk = fk_augmented
+            if fk.shape == (4, 4) and is_sparse(fk[0:3, 3]):
+                message = (
+                        f"Expression {fk[0:3, 3]} for link {link_name} "
+                        "is sparse and thus skipped."
+                )
+                logging.warning(message.format_map(locals()))
+                continue
+            elif fk.shape != (4, 4) and is_sparse(fk):
+                message = (
+                        f"Expression {fk} for link {link_name} "
+                        "is sparse and thus skipped."
+                )
+                logging.warning(message.format_map(locals()))
+                continue
+            collision_link.set_origin(fk)
+            self._variables.add_parameters(collision_link.sym_parameters)
+            self._variables.add_parameters_values(collision_link.parameters)
+            for obstacle in self._problem_configuration.environment.obstacles:
+                distance = collision_link.distance(obstacle)
+                leaf_name = f"{link_name}_{obstacle.name}_leaf"
+                leaf = AvoidanceLeaf(self._variables, leaf_name, distance)
+                leaf.set_geometry(self.config.collision_geometry)
+                leaf.set_finsler_structure(self.config.collision_finsler)
+                self.add_leaf(leaf)
+            """
+            for i in range(self._problem_configuration.environment.number_spheres['dynamic']):
+                obstacle_name = f"obst_dynamic_{i}"
+                if isinstance(collision_link, Sphere):
+                    self.add_dynamic_spherical_obstacle_geometry(
+                            obstacle_name,
+                            link_name,
+                            fk,
+                            reference_parameter_list[i],
+                            dynamic_obstacle_dimension=dynamic_obstacle_dimension,
+                    )
+            for i in range(self._problem_configuration.environment.number_planes):
+                constraint_name = f"constraint_{i}"
+                if isinstance(collision_link, Sphere):
+                    self.add_plane_constraint(constraint_name, link_name, fk)
+
+            for i in range(self._problem_configuration.environment.number_cuboids['static']):
+                obstacle_name = f"obst_cuboid_{i}"
+                if isinstance(collision_link, Sphere):
+                    self.add_cuboid_obstacle_geometry(obstacle_name, link_name, fk)
+            """
+
+
+
 
     def set_components(
         self,
@@ -721,24 +1100,77 @@ class ParameterizedFabricPlanner(object):
         number_plane_constraints: int = 0,
         dynamic_obstacle_dimension: int = 3,
     ):
-        # print("----------------variables init", self._variables)
-        if limits:
-            for joint_index in range(len(limits)):
-                self.add_limit_geometry(joint_index, limits[joint_index])
-        if goal:
-            
-            self.set_goal_component(goal)
-            # print("---------------variables after set_goal", self._variables)
+        collision_links = collision_links or []
+        collision_links_esdf = collision_links_esdf or []
+        self_collision_pairs = self_collision_pairs or {}
 
+        reference_parameter_list = []
+
+        
+        # for i in range(number_dynamic_obstacles):
+        #     reference_parameters = {
+        #         f"x_obst_dynamic_{i}": ca.SX.sym(f"x_obst_dynamic_{i}", dynamic_obstacle_dimension),
+        #         f"xdot_obst_dynamic_{i}": ca.SX.sym(f"xdot_obst_dynamic_{i}", dynamic_obstacle_dimension),
+        #         f"xddot_obst_dynamic_{i}": ca.SX.sym(f"xddot_obst_dynamic_{i}", dynamic_obstacle_dimension),
+        #     }
+        #     reference_parameter_list.append(reference_parameters)
+        # for collision_link in collision_links:
+        #     fk = self.get_forward_kinematics(collision_link)
+        #     if is_sparse(fk):
+        #         message = (
+        #                 f"Expression {fk} for link {collision_link} "
+        #                 "is sparse and thus skipped."
+        #         )
+        #         logging.warning(message.format_map(locals()))
+        #         continue
+        #     for i in range(number_obstacles):
+        #         obstacle_name = f"obst_{i}"
+        #         print("obstacle_name: ", obstacle_name)
+        #         self.add_spherical_obstacle_geometry(obstacle_name, collision_link, fk)
+        #     for i in range(number_dynamic_obstacles):
+        #         obstacle_name = f"obst_dynamic_{i}"
+        #         print("dynamic_obstacle_name: ", obstacle_name)
+        #         self.add_dynamic_spherical_obstacle_geometry(
+        #                 obstacle_name,
+        #                 collision_link,
+        #                 fk,
+        #                 reference_parameter_list[i],
+        #                 dynamic_obstacle_dimension=dynamic_obstacle_dimension,
+        #         )
+        #     for i in range(number_plane_constraints):
+        #         constraint_name = f"constraint_{i}"
+        #         print("constraint_name: ", constraint_name, collision_link)
+        #         self.add_plane_constraint(constraint_name, collision_link, fk)
+
+        #     for i in range(number_obstacles_cuboid):
+        #         obstacle_name = f"obst_cuboid_{i}"
+        #         print("obstacles_cuboid_name: ", obstacle_name)
+        #         self.add_cuboid_obstacle_geometry(obstacle_name, collision_link, fk)
+
+
+        # for collision_link in collision_links_esdf:
+        #     self.add_esdf_geometry(collision_link)
+
+        # for self_collision_key, self_collision_list in self_collision_pairs.items():
+        #     for self_collision_link in self_collision_list:
+        #         self.add_spherical_self_collision_geometry(
+        #                 self_collision_link,
+        #                 self_collision_key,
+        #         )
+
+        # if limits:
+        #     for joint_index in range(len(limits)):
+        #         self.add_limit_geometry(joint_index, limits[joint_index])
+        # execution_energy = ExecutionLagrangian(self._variables)
+        # self.set_execution_energy(execution_energy)
+        print("variables", self._variables)
+        if goal:
+            self.set_goal_component(goal)
             # Adds default execution energy
             execution_energy = ExecutionLagrangian(self._variables)
             self.set_execution_energy(execution_energy)
-            # print("----------------variables after set_execution energy", self._variables)
-
             # Sets speed control
             self.set_speed_control()
-            # print("---------------variables after set_speed_control", self._variables)
-
 
     def get_differential_map(self, sub_goal_index: int, sub_goal: SubGoal):
         if sub_goal.type() == 'staticJointSpaceSubGoal':
@@ -756,8 +1188,7 @@ class ParameterizedFabricPlanner(object):
                     "Subgoal attribute 'angle' deprecated. " \
                     +"Remove the goal attribute angle and rotate the" \
                     +"position before passing it into"\
-                    +"compute_action."\
-                    +"it's here"
+                    +"compute_action."
                 )
                 angles = ca.SX.sym(f"angle_goal_{sub_goal_index}", 3, 3)
                 self._variables.add_parameter(f'angle_goal_{sub_goal_index}', angles)
@@ -785,18 +1216,16 @@ class ParameterizedFabricPlanner(object):
             fk_sub_goal = self.get_differential_map(j, sub_goal)
             if is_sparse(fk_sub_goal):
                 raise ExpressionSparseError()
-            # if sub_goal.type() in ["analyticSubGoal", "splineSubGoal"]:
-            #     attractor = GenericDynamicAttractor(self._variables, fk_sub_goal, f"goal_{j}")
-            # else:
-            self._variables.add_parameter(f'x_goal_{j}', ca.SX.sym(f'x_goal_{j}', sub_goal.dimension()))
-
-            attractor = GenericAttractor(self._variables, fk_sub_goal, f"goal_{j}")
-
+            if sub_goal.type() in ["analyticSubGoal", "splineSubGoal"]:
+                attractor = GenericDynamicAttractor(self._variables, fk_sub_goal, f"goal_{j}")
+            else:
+                self._variables.add_parameter(f'x_goal_{j}', ca.SX.sym(f'x_goal_{j}', sub_goal.dimension()))
+                attractor = GenericAttractor(self._variables, fk_sub_goal, f"goal_{j}")
             attractor.set_potential(self.config.attractor_potential)
-
             attractor.set_metric(self.config.attractor_metric)
-
             self.add_leaf(attractor, prime_leaf=sub_goal.is_primary_goal())
+
+
 
 
 
@@ -1083,6 +1512,7 @@ class ParameterizedFabricPlanner(object):
         # print("beta1", beta)
         # print("alpha1", force_alpha)
         # print("base alpha1", base_alpha)
+
         action_magnitude = np.linalg.norm(action)
         if action_magnitude < eps:
             # logging.warning(f"Fabrics: Avoiding small action with magnitude {action_magnitude}")

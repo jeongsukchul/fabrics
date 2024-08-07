@@ -11,6 +11,7 @@ from fabrics.diffGeometry.diffMap import DifferentialMap, ExplicitDifferentialMa
 from fabrics.diffGeometry.geometry import Geometry, TorchGeometry
 from fabrics.diffGeometry.energy import Lagrangian, TorchLagrangian
 from fabrics.components.leaves.leaf import Leaf, TorchLeaf
+from fabrics.diffGeometry.spec import TorchSpec
 from fabrics.helpers.casadiFunctionWrapper import TorchFunctionWrapper
 from fabrics.helpers.variables import TorchVariables, Variables
 from fabrics.helpers.functions import parse_symbolic_input
@@ -53,6 +54,14 @@ class TorchGenericGeometryLeaf(TorchLeaf):
         
         # self._parent_variables.add_parameters(new_parameters)
         self._lag = TorchLagrangian(lagrangian_geometry, var=self._leaf_variables, isLimit=True)
+    def set_lag(self, lag, metric, force):
+        l = TorchFunctionWrapper(expression=lag, variables=self._leaf_variables,ex_input=self._leaf_variables.position_velocity_variables(), name="limit_energy")
+
+        M = TorchFunctionWrapper(expression=metric, variables=self._leaf_variables, \
+                                 ex_input=self._leaf_variables.position_velocity_variables(), name="limit_M")
+        f = TorchFunctionWrapper(expression=force, variables=self._leaf_variables, \
+                            ex_input=self._leaf_variables.position_velocity_variables(), name="limit_f")
+        self._lag = TorchLagrangian(l, spec=TorchSpec(M, f=f, var=self._leaf_variables), var=self._leaf_variables)
 class GenericGeometryLeaf(Leaf):
 
     def extract_or_create_variable(self, variable_name: str, variable_dimension: int) -> ca.SX:

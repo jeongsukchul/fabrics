@@ -5,6 +5,7 @@ from fabrics.components.maps.parameterized_maps import ParameterizedGoalMap, Tor
 from fabrics.diffGeometry.geometry import Geometry, TorchGeometry
 from fabrics.diffGeometry.energy import Lagrangian, TorchLagrangian
 from fabrics.components.leaves.leaf import Leaf, TorchLeaf
+from fabrics.diffGeometry.spec import TorchSpec
 from fabrics.helpers.variables import Variables, TorchVariables
 from fabrics.helpers.functions import parse_symbolic_input
 from fabrics.planner.configuration_classes import AttractorMetricExpression
@@ -51,23 +52,31 @@ class TorchGenericAttractor(TorchLeaf):
         self._map = TorchParameterizedGoalMap(
             self._parent_variables, self._forward_kinematics, reference_variable
         )
-    def set_potential(self, potential: AttractorPotentialExpression) -> None:
-        psi_ex = lambda x, xdot, weight_goal: (weight_goal * potential(x,xdot)).squeeze()
-        psi = TorchFunctionWrapper(expression= psi_ex, variables=self._leaf_variables,ex_input=(self._leaf_variables.position_velocity_variables()+[self._weight_name]), name="psi_set_potential")
-        self.psi=psi
-        h_psi = psi.grad(self._x, end_grad=True)
-        self.h_psi = h_psi
-        h_psi.set_name("h_psi")
-        self._geo = TorchGeometry(h=h_psi, var=self._leaf_variables)
-
-    def set_metric(self, attractor_metric: AttractorMetricExpression) -> None:
+    # def set_potential(self, potential: AttractorPotentialExpression) -> None:
+    #     psi_ex = lambda x, xdot, weight_goal: (weight_goal * potential(x,xdot)).squeeze()
+    #     psi = TorchFunctionWrapper(expression= psi_ex, variables=self._leaf_variables,ex_input=(self._leaf_variables.position_velocity_variables()+[self._weight_name]), name="psi_set_potential")
+    #     self.psi=psi
+    #     h_psi = psi.grad(self._x)
+    #     self.h_psi = h_psi
+    #     h_psi.set_name("h_psi")
+    #     self._geo = TorchGeometry(h=h_psi, var=self._leaf_variables)
+    def set_geom(self, geom): # weight implementation will be go as soon
+        self._h = TorchFunctionWrapper(expression=geom, variables=self._leaf_variables,ex_input=self._leaf_variables.position_velocity_variables(), name="psi_geom")
+        self._h.set_name("attractor h")
+        self._geo = TorchGeometry(h=self._h, var=self._leaf_variables)
+    def set_lag(self, attractor_metric: AttractorMetricExpression, attrractor_force):
         attractor_M = TorchFunctionWrapper(expression=attractor_metric, variables=self._leaf_variables,\
                                             ex_input=self._leaf_variables.position_velocity_variables(),name="attractor_metric")
+        attractor_f = TorchFunctionWrapper(expression=attrractor_force, variables=self._leaf_variables, \
+                                            ex_input=self._leaf_variables.position_velocity_variables(),name="attractor_force")
         self._M = attractor_M
         self._M.set_name("attractor M")
-        lagrangian_psi = self.xdot().dot(attractor_M @ self.xdot())
+        self._f = attractor_f
+        self._f.set_name("attractor f")
+        lagrangian_psi = 0.5*self.xdot().dot(attractor_M @ self.xdot())
         lagrangian_psi.set_name("lagrangian_psi")
-        self._lag = TorchLagrangian(lagrangian_psi, var=self._leaf_variables)
+        S = TorchSpec(self._M, f=self._f, var=self._leaf_variables)
+        self._lag = TorchLagrangian(lagrangian_psi, spec=S, var=self._leaf_variables)
         # new_parameters, attractor_metric = parse_symbolic_input(attractor_metric_expression, x, xdot, name=self._leaf_name)
         # self._parent_variables.add_parameters(new_parameters)
         # lagrangian_psi = ca.dot(xdot, ca.mtimes(attractor_metric, xdot))
@@ -134,6 +143,6 @@ class GenericAttractor(Leaf):
 
         new_parameters, attractor_metric = parse_symbolic_input(attractor_metric_expression, x, xdot, name=self._leaf_name)
         self._parent_variables.add_parameters(new_parameters)
-        lagrangian_psi = ca.dot(xdot, ca.mtimes(attractor_metric, xdot))
+        lagrangian_psi = ca.dot(0.5*xdot, ca.mtimes(attractor_metric, xdot))
         self._lag = Lagrangian(lagrangian_psi, var=self._leaf_variables)
 

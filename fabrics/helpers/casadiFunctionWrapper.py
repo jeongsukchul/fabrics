@@ -18,7 +18,9 @@ class InputMissmatchError(Exception):
 
 class TorchFunctionWrapper(object):
     _instances = []
+    grad_count = 0
     def __init__(self, variables: TorchVariables, expression=None, function=None, ex_input=None, name = None, iscasadi= False, use_cache=True):
+        
         self._variables = variables
         self._inputs = variables.asArray()
         self._name = name
@@ -94,7 +96,6 @@ class TorchFunctionWrapper(object):
             func = lambda **kwargs : self(**kwargs)/other
             return TorchFunctionWrapper(function=func, variables=self._variables)
     def __rtruediv__(self,other):
-
         func = lambda **kwargs : other/self(**kwargs)
         return TorchFunctionWrapper(function=func, variables=self._variables)
 
@@ -151,7 +152,6 @@ class TorchFunctionWrapper(object):
         def inv(**kwargs):
             M = self(**kwargs)
             M_reg = M+ eps*torch.eye(M.size(0))
-
 
             # U, S, V = torch.svd(M_reg)
             # # print("S", S)
@@ -214,6 +214,8 @@ class TorchFunctionWrapper(object):
             return self._func(**kwargs)
         grad_fn = torch.func.jacrev(wrapper_fn, argnums=index)
         def grad_func(**kwargs):
+            TorchFunctionWrapper.grad_count+=1
+
             args = [kwargs[input] for input in self._inputs]
             result = grad_fn(*args)
             if end_grad:
@@ -238,7 +240,8 @@ class TorchFunctionWrapper(object):
 
         grad_fn = torch.func.jacrev(wrapper_fn, argnums=index)
 
-        def grad_func_elementwise(**kwargs):
+        def grad_func_elementwise(**kwargs): 
+            TorchFunctionWrapper.grad_count+=1
             args = [kwargs[input] for input in self._inputs]
             if end_grad:
                 # print("grad result",torch.diag(grad_fn(*args),0).detach().type(torch.float64))

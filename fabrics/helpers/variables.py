@@ -163,7 +163,7 @@ class TorchVariables: # it gives only function variables name[key]  i will not u
     def asArray(self):
         return [self._position, self._velocity]+list(self._parameter_variables)
     
-    def position_velocity_variables(self) -> set:
+    def position_velocity_variables(self) -> list:
         return [self._position, self._velocity]
 
     def position_variable(self) -> str:

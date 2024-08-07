@@ -41,8 +41,8 @@ class TorchLagrangian(object):
             self._isLimit = kwargs.get("isLimit")
         else:
             self._isLimit = False
-        if 'spec' in kwargs and 'hamiltonian' in kwargs:
-            self._H = kwargs.get('hamiltonian')
+        if 'spec' in kwargs:
+            # self._H = kwargs.get('hamiltonian')
             self._S = kwargs.get('spec')
         else:
             self.applyEulerLagrange()
@@ -75,8 +75,8 @@ class TorchLagrangian(object):
             f = F @ self.xdot() + f_e
             f.set_name("lagrange f_limit")
             self._dL_dxdot = dL_dxdot
-            self._H = dL_dxdot @ self.xdot() - self._l 
-            self._H.set_name("limit hamiltonian")
+            # self._H = dL_dxdot @ self.xdot() - self._l 
+            # self._H.set_name("limit hamiltonian")
             self._S = TorchSpec(M, f=f, var=self._vars)
         else:
             dL_dxdot = self._l.grad(self._xdot)
@@ -95,8 +95,8 @@ class TorchLagrangian(object):
             f.set_name("lagrange f")
 
             self._dL_dxdot = dL_dxdot
-            self._H = dL_dxdot @ self.xdot() - self._l 
-            self._H.set_name("hamiltonian")
+            # self._H = dL_dxdot @ self.xdot() - self._l 
+            # self._H.set_name("hamiltonian")
             self._S = TorchSpec(M, f=f, var=self._vars)
 
     
@@ -105,20 +105,36 @@ class TorchLagrangian(object):
         if isLimit:
             l = self._l.lowerLeaf(dm).sum()
             l.set_name("l_pulled_limit")
-            H = self._H.lowerLeaf(dm)
-            H.set_name("H_pulled_limit")
+            # H = self._H.lowerLeaf(dm)
+            # H.set_name("H_pulled_limit")
             M = self._S._M.lowerLeaf(dm)
             M.set_name("lag M_pulled_limit")
             f = self._S._f.lowerLeaf(dm)
             f.set_name("lag f_pulled_limit")
             new_vars = TorchVariables(position = dm._vars._position, velocity= dm._vars._velocity, parameter_variables=dm._vars._parameter_variables | self._vars._parameter_variables)
             S_pulled = TorchSpec(M, f=f, var=new_vars)
-            return TorchLagrangian(l, spec = S_pulled, hamiltonian=H, var=new_vars)
+            # return TorchLagrangian(l, spec = S_pulled, hamiltonian=H, var=new_vars)
+            return TorchLagrangian(l, spec = S_pulled, var=new_vars)
+        # else:
+        #     l = self._l.lowerLeaf(dm)
+        #     l.set_name("l_pulled")
+        #     new_vars = TorchVariables(position = dm._vars._position, velocity= dm._vars._velocity, parameter_variables=dm._vars._parameter_variables | self._vars._parameter_variables)
+        #     return TorchLagrangian(l, var=new_vars)
         else:
-            l = self._l.lowerLeaf(dm)
-            l.set_name("l_pulled")
+            Jt = dm._J.transpose()
+            l_subst = self._l.lowerLeaf(dm)
+            H_subst=  l_subst.grad(dm._qdot) @ dm.qdot() - l_subst
+            M_subst= self._S._M.lowerLeaf(dm)
+            M_pulled = Jt @ M_subst @dm._J
+            f_subst = self._S._f.lowerLeaf(dm)
+            # f_pulled = Jt @ (M_subst @ dm._Jdotqdot + f_subst)
+            f_pulled = Jt @ (f_subst)
             new_vars = TorchVariables(position = dm._vars._position, velocity= dm._vars._velocity, parameter_variables=dm._vars._parameter_variables | self._vars._parameter_variables)
-            return TorchLagrangian(l, var=new_vars)
+            S_pulled = TorchSpec(M_pulled, f=f_pulled, var=new_vars)
+
+            # return TorchLagrangian(l_subst, spec=S_pulled, hamiltonian=H_subst, var=new_vars)
+            return TorchLagrangian(l_subst, spec=S_pulled,  var=new_vars)
+
 
         # new_state_variables = dm.state_variables()
         # new_parameters = {}
@@ -151,7 +167,8 @@ class TorchLagrangian(object):
         # else:
         #     ref_arguments = {}
         new_vars = self._vars + b._vars
-        return  TorchLagrangian(self._l + b._l, spec=self._S + b._S, hamiltonian=self._H + b._H, var=new_vars)
+        # return  TorchLagrangian(self._l + b._l, spec=self._S + b._S, hamiltonian=self._H + b._H, var=new_vars)
+        return  TorchLagrangian(self._l, spec=self._S + b._S, var=new_vars)
     
 class Lagrangian(object):
     """description"""

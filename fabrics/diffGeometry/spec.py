@@ -173,20 +173,20 @@ class Spec:
         for refTraj in self._refTrajs:
             var += refTraj._vars
             
-        S = ca.svd(self.M())[1]
+        # S = ca.svd(self.M())[1]
         self._funs = CasadiFunctionWrapper(
-            "funs", var, {"M": self.M(), "S" : S, "f": self.f(), "xddot": self._xddot}
+            "funs", var, {"M": self.M(),  "f": self.f(), "xddot": self._xddot}
         )
 
     def evaluate(self, **kwargs):
         evaluations = self._funs.evaluate(**kwargs)
         M_eval = evaluations["M"]
-        M_condn = evaluations["S"]
+        # M_condn = evaluations["S"]
         if len(M_eval.shape) == 1:
             M_eval = np.array([M_eval])
         f_eval = evaluations["f"]
         xddot_eval = evaluations["xddot"]
-        return [M_eval, M_condn, f_eval, xddot_eval]
+        return [M_eval, f_eval, xddot_eval]
 
     def __add__(self, b):
         assert isinstance(b, Spec)
@@ -228,7 +228,8 @@ class Spec:
         Jt = ca.transpose(dm._J)
         f_1 = ca.mtimes(Jt, ca.mtimes(self.M(), dm.Jdotqdot()))
         f_2 = ca.mtimes(Jt, self.f())
-        f_pulled = f_1 + f_2
+        # f_pulled = f_1 + f_2
+        f_pulled = f_2
 
         M_pulled_subst_x = ca.substitute(M_pulled, x, dm._phi)
         M_pulled_subst_x_xdot = ca.substitute(

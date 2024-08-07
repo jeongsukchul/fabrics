@@ -27,7 +27,8 @@ class TorchDifferentialMap:
             self._qdot = inputs[1]
             self._vars = TorchVariables(position = self._q, velocity = self._qdot, parameter_variables=set(inputs[2:]))
             casadi = lambda **inputs: self._caFunc.evaluate(**inputs)
-            self._phi = TorchFunctionWrapper(function=lambda **inputs: torch.tensor(casadi(**inputs)["phi"],dtype=torch.float64), variables=self._vars, name="dm.phi", iscasadi=True)
+            self._phi = TorchFunctionWrapper(function=lambda **inputs: torch.tensor(casadi(**inputs)["phi"],dtype=torch.float64), variables=self._vars, \
+                                             name="dm.phi", iscasadi=True)
             self._phi.set_name("phi")
             self._J = TorchFunctionWrapper(function=lambda **inputs: torch.tensor(casadi(**inputs)["J"],dtype=torch.float64), variables=self._vars,name="dm.J",iscasadi=True)
             self._J.set_name("J")
@@ -40,7 +41,8 @@ class TorchDifferentialMap:
             self._phi.set_name("phi_limit")
             self._J = phi.grad(q)
             self._J.set_name("J_limit")
-            self._Jdot = Jdot_sign * (self._J @ self.qdot()).grad(q)
+            self._Jdot =TorchFunctionWrapper(function=lambda **inputs: torch.zeros(7),variables=self._vars)
+                # Jdot_sign * (self._J @ self.qdot()).grad(q)
             self._Jdot.set_name("Jdot_limit")
             self._Jdotqdot = self._Jdot @ self.qdot()
             self._Jdotqdot.set_name("Jdotqdot_limit")
